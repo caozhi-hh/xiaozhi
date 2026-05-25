@@ -28,6 +28,7 @@ deepagents>=0.3.5
 
 # Tools
 duckduckgo-search
+lxml_html_clean
 
 # File handling
 PyMuPDF
