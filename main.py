@@ -1,4 +1,4 @@
-"""
+""""
 小智 AI - 后端入口（DeepAgents 版·自用单用户）
 
 路由结构：
@@ -528,7 +528,40 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@app.post("/stt")
+async def speech_to_text(audio: UploadFile = File(...)):
+    """语音转文字 — 使用 DashScope paraformer 模型"""
+    from llm import MODELS
+    qwen_config = MODELS.get("qwen-turbo") or MODELS.get("qwen-max")
+    if not qwen_config:
+        raise HTTPException(status_code=500, detail="未配置语音识别模型")
+
+    audio_bytes = await audio.read()
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+
+    try:
+        async with httpx.AsyncClient(proxy=None, timeout=httpx.Timeout(30.0)) as client:
+            with open(tmp_path, "rb") as f:
+                r = await client.post(
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {qwen_config['api_key']}"},
+                    files={"file": ("audio.webm", f, "audio/webm")},
+                    data={"model": "paraformer-v2"},
+                )
+            result = r.json()
+            text = result.get("text", "")
+            if not text:
+                raise HTTPException(status_code=500, detail="语音识别返回为空")
+            return {"text": text}
+    finally:
+        os.unlink(tmp_path)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=PORT)
+
 
