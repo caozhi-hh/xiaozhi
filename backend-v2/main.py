@@ -528,6 +528,76 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@app.post("/stt")
+async def speech_to_text(audio: UploadFile = File(...)):
+    """语音转文字 — 使用 SiliconFlow SenseVoice（多语言）"""
+    import logging, tempfile, subprocess
+    logger = logging.getLogger("stt")
+
+    if not SILICONFLOW_API_KEY:
+        raise HTTPException(status_code=500, detail="未配置 SILICONFLOW_API_KEY")
+
+    audio_bytes = await audio.read()
+    if len(audio_bytes) < 500:
+        return {"text": "", "error": "音频太短"}
+
+    orig_name = audio.filename or "audio.webm"
+    suffix = orig_name.rsplit(".", 1)[-1] if "." in orig_name else "webm"
+
+    audio_path = None
+    wav_path = None
+    final_path = None
+    final_name = orig_name
+    final_mime = audio.content_type or "audio/webm"
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=f".{suffix}", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            audio_path = tmp.name
+
+        wav_path = audio_path.rsplit(".", 1)[0] + ".wav"
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
+            capture_output=True, timeout=10,
+        )
+        if proc.returncode == 0 and os.path.exists(wav_path):
+            final_path = wav_path
+            final_name = "audio.wav"
+            final_mime = "audio/wav"
+            logger.info(f"STT: converted {suffix} -> wav ({os.path.getsize(wav_path)} bytes)")
+        else:
+            final_path = audio_path
+            logger.info(f"STT: ffmpeg unavailable, sending raw {suffix}")
+    except Exception:
+        final_path = audio_path
+        logger.info(f"STT: ffmpeg failed, sending raw {suffix}")
+
+    try:
+        async with httpx.AsyncClient(proxy=None, timeout=httpx.Timeout(30.0)) as client:
+            with open(final_path, "rb") as f:
+                r = await client.post(
+                    "https://api.siliconflow.cn/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {SILICONFLOW_API_KEY}"},
+                    files={"file": (final_name, f, final_mime)},
+                    data={"model": "FunAudioLLM/SenseVoiceSmall"},
+                )
+            result = r.json()
+            logger.info(f"STT SiliconFlow response: status={r.status_code} body={str(result)[:300]}")
+
+            text = result.get("text", "")
+            if not text:
+                logger.warning("STT returned empty text")
+            return {"text": text}
+    except Exception as e:
+        logger.error(f"STT error: {e}")
+        raise HTTPException(status_code=500, detail=f"语音识别失败: {e}")
+    finally:
+        for p in [audio_path, wav_path]:
+            if p and os.path.exists(p):
+                try: os.unlink(p)
+                except: pass
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=PORT)
