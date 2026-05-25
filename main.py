@@ -77,6 +77,14 @@ def root():
     return {"status": "ok", "message": "小智 AI 后端运行中"}
 
 
+@app.get("/debug")
+def debug_info():
+    return {
+        "siliconflow_key_set": bool(SILICONFLOW_API_KEY),
+        "siliconflow_key_prefix": SILICONFLOW_API_KEY[:8] + "..." if SILICONFLOW_API_KEY else "NONE",
+    }
+
+
 @app.get("/models")
 def models_list():
     return get_available_models()
@@ -530,14 +538,13 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
 
 @app.post("/stt")
 async def speech_to_text(audio: UploadFile = File(...)):
-    """语音转文字 — 多语言支持"""
-    import logging
+    """语音转文字 — 使用 SiliconFlow SenseVoice（多语言）"""
+    import logging, tempfile, subprocess
     logger = logging.getLogger("stt")
 
-    from llm import MODELS
-    qwen_config = MODELS.get("qwen-turbo") or MODELS.get("qwen-max")
-    if not qwen_config:
-        raise HTTPException(status_code=500, detail="未配置模型")
+    logger.info(f"STT called. SILICONFLOW_API_KEY set: {bool(SILICONFLOW_API_KEY)}")
+    if not SILICONFLOW_API_KEY:
+        raise HTTPException(status_code=500, detail="未配置 SILICONFLOW_API_KEY")
 
     audio_bytes = await audio.read()
     if len(audio_bytes) < 500:
@@ -546,14 +553,12 @@ async def speech_to_text(audio: UploadFile = File(...)):
     orig_name = audio.filename or "audio.webm"
     suffix = orig_name.rsplit(".", 1)[-1] if "." in orig_name else "webm"
 
-    # 尝试 ffmpeg 转 wav，失败则直接发原始格式
     audio_path = None
     wav_path = None
     final_path = None
     final_name = orig_name
     final_mime = audio.content_type or "audio/webm"
 
-    import tempfile, subprocess
     try:
         with tempfile.NamedTemporaryFile(suffix=f".{suffix}", delete=False) as tmp:
             tmp.write(audio_bytes)
@@ -568,44 +573,36 @@ async def speech_to_text(audio: UploadFile = File(...)):
             final_path = wav_path
             final_name = "audio.wav"
             final_mime = "audio/wav"
-            logger.info(f"Converted {suffix} -> wav ({os.path.getsize(wav_path)} bytes)")
+            logger.info(f"STT: converted {suffix} -> wav ({os.path.getsize(wav_path)} bytes)")
         else:
             final_path = audio_path
-            logger.info(f"ffmpeg not available, sending raw {suffix}")
-    except Exception:
+            logger.info(f"STT: ffmpeg unavailable, sending raw {suffix}")
+    except Exception as e:
         final_path = audio_path
-        logger.info(f"ffmpeg failed, sending raw {suffix}")
+        logger.warning(f"STT: ffmpeg failed: {e}")
+
+    if not final_path or not os.path.exists(final_path):
+        raise HTTPException(status_code=500, detail="音频临时文件写入失败")
 
     try:
         async with httpx.AsyncClient(proxy=None, timeout=httpx.Timeout(30.0)) as client:
             with open(final_path, "rb") as f:
                 r = await client.post(
-                    "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {qwen_config['api_key']}"},
+                    "https://api.siliconflow.cn/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {SILICONFLOW_API_KEY}"},
                     files={"file": (final_name, f, final_mime)},
-                    data={"model": "paraformer-v2"},
+                    data={"model": "FunAudioLLM/SenseVoiceSmall"},
                 )
             result = r.json()
-            logger.info(f"STT response: {str(result)[:300]}")
-
-            if "error" in result:
-                # DashScope 报错，尝试用 sensevoice-v2（支持更多格式）
-                logger.info("Trying sensevoice model as fallback...")
-                final_path2 = audio_path if audio_path != final_path else audio_path
-                with open(final_path2 or final_path, "rb") as f:
-                    r2 = await client.post(
-                        "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions",
-                        headers={"Authorization": f"Bearer {qwen_config['api_key']}"},
-                        files={"file": (orig_name, f, audio.content_type or "application/octet-stream")},
-                        data={"model": "sensevoice-v1"},
-                    )
-                result2 = r2.json()
-                logger.info(f"Sensevoice response: {str(result2)[:300]}")
-                text = result2.get("text", "")
-                return {"text": text}
+            logger.info(f"STT SiliconFlow response: status={r.status_code} body={str(result)[:300]}")
 
             text = result.get("text", "")
+            if not text:
+                logger.warning("STT returned empty text")
             return {"text": text}
+    except Exception as e:
+        logger.error(f"STT error: {e}")
+        raise HTTPException(status_code=500, detail=f"语音识别失败: {e}")
     finally:
         for p in [audio_path, wav_path]:
             if p and os.path.exists(p):
