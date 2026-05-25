@@ -2,6 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Force cache bust
+ARG BUILD_DATE
+RUN echo "Build: ${BUILD_DATE}"
+
 # Install ffmpeg (for audio conversion in /stt) and dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 
