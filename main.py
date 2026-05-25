@@ -43,11 +43,20 @@ from rag import ingest_document, search_knowledge, delete_document_vectors
 # 创建所有数据库表（如果不存在）
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="小智 AI", version="0.4.0")
+app = FastAPI(title="小智 AI", version="0.5.0")
+
+ALLOWED_ORIGINS = [
+    "https://xiaozhi-ex8.pages.dev",
+    "http://localhost:3000",
+]
+# 支持通过环境变量追加额外域名
+extra = os.environ.get("CORS_ORIGINS", "")
+if extra:
+    ALLOWED_ORIGINS.extend(o.strip() for o in extra.split(",") if o.strip())
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -57,6 +66,11 @@ PORT = int(os.environ.get("PORT", 8001))
 
 # 自用单用户，固定 user_id=1
 USER_ID = 1
+
+# 企业微信渠道（未配置时自动跳过，不影响 Web 前端）
+from wecom import router as wecom_router
+if wecom_router:
+    app.include_router(wecom_router)
 
 
 # ---------- 请求格式 ----------
