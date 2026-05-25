@@ -530,27 +530,40 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
 
 @app.post("/stt")
 async def speech_to_text(audio: UploadFile = File(...)):
-    """语音转文字 — 使用 DashScope paraformer 模型"""
+    """语音转文字 — 多语言支持，自动检测语言"""
+    import tempfile, subprocess, logging
+    logger = logging.getLogger("stt")
+
     from llm import MODELS
     qwen_config = MODELS.get("qwen-turbo") or MODELS.get("qwen-max")
     if not qwen_config:
         raise HTTPException(status_code=500, detail="未配置语音识别模型")
 
     audio_bytes = await audio.read()
-    import tempfile, subprocess
-    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
+    if len(audio_bytes) < 500:
+        return {"text": "", "error": "音频太短"}
+
+    # 根据上传文件后缀判断原始格式
+    orig_name = audio.filename or "audio.webm"
+    suffix = orig_name.rsplit(".", 1)[-1] if "." in orig_name else "webm"
+
+    with tempfile.NamedTemporaryFile(suffix=f".{suffix}", delete=False) as tmp:
         tmp.write(audio_bytes)
-        webm_path = tmp.name
-    wav_path = webm_path.replace(".webm", ".wav")
+        raw_path = tmp.name
+    wav_path = raw_path.rsplit(".", 1)[0] + ".wav"
 
     try:
-        # webm → wav（DashScope paraformer 不支持 webm）
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", webm_path, "-ar", "16000", "-ac", "1", wav_path],
-            capture_output=True, timeout=10,
+        # 转成 wav 16kHz 单声道
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", raw_path, "-ar", "16000", "-ac", "1", wav_path],
+            capture_output=True, timeout=15,
         )
-        if not os.path.exists(wav_path):
+        if proc.returncode != 0:
+            logger.error(f"ffmpeg failed: {proc.stderr.decode()[:300]}")
             raise HTTPException(status_code=500, detail="音频格式转换失败")
+
+        wav_size = os.path.getsize(wav_path)
+        logger.info(f"Audio converted: {wav_size} bytes")
 
         async with httpx.AsyncClient(proxy=None, timeout=httpx.Timeout(30.0)) as client:
             with open(wav_path, "rb") as f:
@@ -561,12 +574,15 @@ async def speech_to_text(audio: UploadFile = File(...)):
                     data={"model": "paraformer-v2"},
                 )
             result = r.json()
+            logger.info(f"DashScope response: {str(result)[:300]}")
+
+            if "error" in result:
+                raise HTTPException(status_code=500, detail=f"识别失败: {result['error'].get('message', '')[:100]}")
+
             text = result.get("text", "")
-            if not text:
-                return {"text": ""}
             return {"text": text}
     finally:
-        for p in [webm_path, wav_path]:
+        for p in [raw_path, wav_path]:
             if os.path.exists(p):
                 os.unlink(p)
 
