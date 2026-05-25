@@ -530,61 +530,87 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
 
 @app.post("/stt")
 async def speech_to_text(audio: UploadFile = File(...)):
-    """语音转文字 — 多语言支持，自动检测语言"""
-    import tempfile, subprocess, logging
+    """语音转文字 — 多语言支持"""
+    import logging
     logger = logging.getLogger("stt")
 
     from llm import MODELS
     qwen_config = MODELS.get("qwen-turbo") or MODELS.get("qwen-max")
     if not qwen_config:
-        raise HTTPException(status_code=500, detail="未配置语音识别模型")
+        raise HTTPException(status_code=500, detail="未配置模型")
 
     audio_bytes = await audio.read()
     if len(audio_bytes) < 500:
         return {"text": "", "error": "音频太短"}
 
-    # 根据上传文件后缀判断原始格式
     orig_name = audio.filename or "audio.webm"
     suffix = orig_name.rsplit(".", 1)[-1] if "." in orig_name else "webm"
 
-    with tempfile.NamedTemporaryFile(suffix=f".{suffix}", delete=False) as tmp:
-        tmp.write(audio_bytes)
-        raw_path = tmp.name
-    wav_path = raw_path.rsplit(".", 1)[0] + ".wav"
+    # 尝试 ffmpeg 转 wav，失败则直接发原始格式
+    audio_path = None
+    wav_path = None
+    final_path = None
+    final_name = orig_name
+    final_mime = audio.content_type or "audio/webm"
+
+    import tempfile, subprocess
+    try:
+        with tempfile.NamedTemporaryFile(suffix=f".{suffix}", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            audio_path = tmp.name
+
+        wav_path = audio_path.rsplit(".", 1)[0] + ".wav"
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
+            capture_output=True, timeout=10,
+        )
+        if proc.returncode == 0 and os.path.exists(wav_path):
+            final_path = wav_path
+            final_name = "audio.wav"
+            final_mime = "audio/wav"
+            logger.info(f"Converted {suffix} -> wav ({os.path.getsize(wav_path)} bytes)")
+        else:
+            final_path = audio_path
+            logger.info(f"ffmpeg not available, sending raw {suffix}")
+    except Exception:
+        final_path = audio_path
+        logger.info(f"ffmpeg failed, sending raw {suffix}")
 
     try:
-        # 转成 wav 16kHz 单声道
-        proc = subprocess.run(
-            ["ffmpeg", "-y", "-i", raw_path, "-ar", "16000", "-ac", "1", wav_path],
-            capture_output=True, timeout=15,
-        )
-        if proc.returncode != 0:
-            logger.error(f"ffmpeg failed: {proc.stderr.decode()[:300]}")
-            raise HTTPException(status_code=500, detail="音频格式转换失败")
-
-        wav_size = os.path.getsize(wav_path)
-        logger.info(f"Audio converted: {wav_size} bytes")
-
         async with httpx.AsyncClient(proxy=None, timeout=httpx.Timeout(30.0)) as client:
-            with open(wav_path, "rb") as f:
+            with open(final_path, "rb") as f:
                 r = await client.post(
                     "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions",
                     headers={"Authorization": f"Bearer {qwen_config['api_key']}"},
-                    files={"file": ("audio.wav", f, "audio/wav")},
+                    files={"file": (final_name, f, final_mime)},
                     data={"model": "paraformer-v2"},
                 )
             result = r.json()
-            logger.info(f"DashScope response: {str(result)[:300]}")
+            logger.info(f"STT response: {str(result)[:300]}")
 
             if "error" in result:
-                raise HTTPException(status_code=500, detail=f"识别失败: {result['error'].get('message', '')[:100]}")
+                # DashScope 报错，尝试用 sensevoice-v2（支持更多格式）
+                logger.info("Trying sensevoice model as fallback...")
+                final_path2 = audio_path if audio_path != final_path else audio_path
+                with open(final_path2 or final_path, "rb") as f:
+                    r2 = await client.post(
+                        "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {qwen_config['api_key']}"},
+                        files={"file": (orig_name, f, audio.content_type or "application/octet-stream")},
+                        data={"model": "sensevoice-v1"},
+                    )
+                result2 = r2.json()
+                logger.info(f"Sensevoice response: {str(result2)[:300]}")
+                text = result2.get("text", "")
+                return {"text": text}
 
             text = result.get("text", "")
             return {"text": text}
     finally:
-        for p in [raw_path, wav_path]:
-            if os.path.exists(p):
-                os.unlink(p)
+        for p in [audio_path, wav_path]:
+            if p and os.path.exists(p):
+                try: os.unlink(p)
+                except: pass
 
 
 if __name__ == "__main__":
