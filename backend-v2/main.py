@@ -77,6 +77,14 @@ def root():
     return {"status": "ok", "message": "小智 AI 后端运行中"}
 
 
+@app.get("/debug")
+def debug_info():
+    return {
+        "siliconflow_key_set": bool(SILICONFLOW_API_KEY),
+        "siliconflow_key_prefix": SILICONFLOW_API_KEY[:8] + "..." if SILICONFLOW_API_KEY else "NONE",
+    }
+
+
 @app.get("/models")
 def models_list():
     return get_available_models()
@@ -534,6 +542,7 @@ async def speech_to_text(audio: UploadFile = File(...)):
     import logging, tempfile, subprocess
     logger = logging.getLogger("stt")
 
+    logger.info(f"STT called. SILICONFLOW_API_KEY set: {bool(SILICONFLOW_API_KEY)}")
     if not SILICONFLOW_API_KEY:
         raise HTTPException(status_code=500, detail="未配置 SILICONFLOW_API_KEY")
 
