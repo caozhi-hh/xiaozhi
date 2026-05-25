@@ -44,3 +44,4 @@ chromadb
 
 # WeChat Work encryption
 pycryptodome
+langchain-chroma
