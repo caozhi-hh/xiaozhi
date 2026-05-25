@@ -77,14 +77,6 @@ def root():
     return {"status": "ok", "message": "小智 AI 后端运行中"}
 
 
-@app.get("/debug")
-def debug_info():
-    return {
-        "siliconflow_key_set": bool(SILICONFLOW_API_KEY),
-        "siliconflow_key_prefix": SILICONFLOW_API_KEY[:8] + "..." if SILICONFLOW_API_KEY else "NONE",
-    }
-
-
 @app.get("/models")
 def models_list():
     return get_available_models()
