@@ -568,9 +568,12 @@ async def speech_to_text(audio: UploadFile = File(...)):
         else:
             final_path = audio_path
             logger.info(f"STT: ffmpeg unavailable, sending raw {suffix}")
-    except Exception:
+    except Exception as e:
         final_path = audio_path
-        logger.info(f"STT: ffmpeg failed, sending raw {suffix}")
+        logger.warning(f"STT: ffmpeg failed: {e}")
+
+    if not final_path or not os.path.exists(final_path):
+        raise HTTPException(status_code=500, detail="音频临时文件写入失败")
 
     try:
         async with httpx.AsyncClient(proxy=None, timeout=httpx.Timeout(30.0)) as client:
