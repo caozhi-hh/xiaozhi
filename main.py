@@ -1,4 +1,4 @@
-""""
+"""
 小智 AI - 后端入口（DeepAgents 版·自用单用户）
 
 路由结构：
@@ -537,31 +537,41 @@ async def speech_to_text(audio: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="未配置语音识别模型")
 
     audio_bytes = await audio.read()
-    import tempfile
+    import tempfile, subprocess
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
         tmp.write(audio_bytes)
-        tmp_path = tmp.name
+        webm_path = tmp.name
+    wav_path = webm_path.replace(".webm", ".wav")
 
     try:
+        # webm → wav（DashScope paraformer 不支持 webm）
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", webm_path, "-ar", "16000", "-ac", "1", wav_path],
+            capture_output=True, timeout=10,
+        )
+        if not os.path.exists(wav_path):
+            raise HTTPException(status_code=500, detail="音频格式转换失败")
+
         async with httpx.AsyncClient(proxy=None, timeout=httpx.Timeout(30.0)) as client:
-            with open(tmp_path, "rb") as f:
+            with open(wav_path, "rb") as f:
                 r = await client.post(
                     "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions",
                     headers={"Authorization": f"Bearer {qwen_config['api_key']}"},
-                    files={"file": ("audio.webm", f, "audio/webm")},
+                    files={"file": ("audio.wav", f, "audio/wav")},
                     data={"model": "paraformer-v2"},
                 )
             result = r.json()
             text = result.get("text", "")
             if not text:
-                raise HTTPException(status_code=500, detail="语音识别返回为空")
+                return {"text": ""}
             return {"text": text}
     finally:
-        os.unlink(tmp_path)
+        for p in [webm_path, wav_path]:
+            if os.path.exists(p):
+                os.unlink(p)
 
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=PORT)
-
 
