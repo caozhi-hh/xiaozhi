@@ -2,16 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Force cache bust
-ARG BUILD_DATE
-RUN echo "Build: ${BUILD_DATE}"
-
 # Install ffmpeg (for audio conversion in /stt) and dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Force cache bust before copying source (ensures latest code is used)
+ARG BUILD_DATE=now
+RUN echo "Build at ${BUILD_DATE}" > /dev/null
 
 # Copy source code
 COPY . .
