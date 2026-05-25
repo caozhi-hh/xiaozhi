@@ -14,10 +14,10 @@ if ENV_FILE.exists():
 
 SILICONFLOW_API_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
 
-WECOM_CORP_ID = os.environ.get("WECOM_CORP_ID", "")
-WECOM_AGENT_ID = os.environ.get("WECOM_AGENT_ID", "")
-WECOM_SECRET = os.environ.get("WECOM_SECRET", "")
-WECOM_TOKEN = os.environ.get("WECOM_TOKEN", "")
-WECOM_ENCODING_AES_KEY = os.environ.get("WECOM_ENCODING_AES_KEY", "")
+WECOM_CORP_ID = os.environ.get("WECOM_CORP_ID", "ww134b86debdd9d61b")
+WECOM_AGENT_ID = os.environ.get("WECOM_AGENT_ID", "1000002")
+WECOM_SECRET = os.environ.get("WECOM_SECRET", "FeKUBOVltZTO9DsaVFPMx7pUL4I-b7XflFVbTo228u0")
+WECOM_TOKEN = os.environ.get("WECOM_TOKEN", "xiaozhi2026")
+WECOM_ENCODING_AES_KEY = os.environ.get("WECOM_ENCODING_AES_KEY", "nzM2wUoVzoX7P0bBTlHL65PIfLuuAH6gLzqevm1zIbl")
 
 WECOM_WEBHOOK_URL = os.environ.get("WECOM_WEBHOOK_URL", "")

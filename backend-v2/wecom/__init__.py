@@ -1,12 +1,7 @@
 """
-企业微信渠道 -- 优雅降级
+企业微信渠道
 
-只在 WECOM_* 环境变量完整配置时才加载路由，
-否则 router=None，不影响 Web 前端和其他功能。
+路由始终注册（保证回调 URL 可达），
+缺少配置时 API 调用会失败但不影响启动。
 """
-from config import WECOM_CORP_ID, WECOM_SECRET, WECOM_TOKEN
-
-if WECOM_CORP_ID and WECOM_SECRET and WECOM_TOKEN:
-    from wecom.router import router
-else:
-    router = None
+from wecom.router import router

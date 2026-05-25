@@ -8,24 +8,30 @@ POST /wecom/callback  → 接收用户消息
 """
 import asyncio
 import logging
+from functools import lru_cache
 
 from fastapi import APIRouter, Query, Request, Response
 
 from config import WECOM_CORP_ID, WECOM_ENCODING_AES_KEY, WECOM_TOKEN
 from wecom.crypto import WeComCrypto, parse_encrypted_xml, parse_message_xml
-from wecom.client import send_text
-from wecom.adapter import process_message
 
 logger = logging.getLogger("wecom.router")
 
 router = APIRouter(prefix="/wecom", tags=["企业微信"])
 
-# 初始化加解密
-_crypto = WeComCrypto(
-    token=WECOM_TOKEN,
-    encoding_aes_key=WECOM_ENCODING_AES_KEY,
-    corp_id=WECOM_CORP_ID,
-)
+
+@lru_cache
+def _get_crypto() -> WeComCrypto:
+    """延迟初始化加解密（环境变量可能后加载）"""
+    return WeComCrypto(
+        token=WECOM_TOKEN,
+        encoding_aes_key=WECOM_ENCODING_AES_KEY,
+        corp_id=WECOM_CORP_ID,
+    )
+
+
+def _wecom_configured() -> bool:
+    return bool(WECOM_TOKEN and WECOM_ENCODING_AES_KEY and WECOM_CORP_ID)
 
 # 已处理的 MsgId 集合（防止重复处理）
 _processed_msgs: set[str] = set()
@@ -40,11 +46,16 @@ def verify_url(
     echostr: str = Query(...),
 ):
     """URL 验证 -- 企业微信后台配置回调时调用"""
-    if not _crypto.verify_signature(msg_signature, timestamp, nonce, echostr):
+    if not _wecom_configured():
+        logger.warning("企微未配置，请设置 HF Spaces Secrets")
+        return Response(content="wecom not configured", status_code=503)
+
+    crypto = _get_crypto()
+    if not crypto.verify_signature(msg_signature, timestamp, nonce, echostr):
         logger.warning("URL 验证签名失败")
         return Response(content="signature mismatch", status_code=403)
 
-    plain = _crypto.decrypt(echostr)
+    plain = crypto.decrypt(echostr)
     logger.info("URL 验证成功")
     return Response(content=plain, media_type="text/plain")
 
@@ -60,16 +71,22 @@ async def receive_message(
     body = await request.body()
     xml_body = body.decode("utf-8")
 
+    if not _wecom_configured():
+        logger.warning("企微未配置，忽略消息")
+        return Response(content="success")
+
+    crypto = _get_crypto()
+
     # 1. 提取加密内容
     encrypt = parse_encrypted_xml(xml_body)
 
     # 2. 验证签名
-    if not _crypto.verify_signature(msg_signature, timestamp, nonce, encrypt):
+    if not crypto.verify_signature(msg_signature, timestamp, nonce, encrypt):
         logger.warning("消息签名验证失败")
         return Response(content="success")
 
     # 3. 解密消息
-    plain_xml = _crypto.decrypt(encrypt)
+    plain_xml = crypto.decrypt(encrypt)
     msg = parse_message_xml(plain_xml)
     logger.info("收到企微消息: FromUser=%s, Content=%s", msg.get("FromUserName", ""), msg.get("Content", "")[:50])
 
