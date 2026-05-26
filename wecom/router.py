@@ -46,8 +46,13 @@ def verify_url(
     echostr: str = Query(...),
 ):
     """URL 验证 -- 企业微信后台配置回调时调用"""
+    logger.info("====== 收到企微 URL 验证请求 ======")
+    logger.info("msg_signature=%s, timestamp=%s, nonce=%s, echostr=%s",
+                msg_signature, timestamp, nonce, echostr[:30] + "..." if len(echostr) > 30 else echostr)
+
     if not _wecom_configured():
-        logger.warning("企微未配置，请设置 HF Spaces Secrets")
+        logger.error("企微未配置! TOKEN=%s, AES_KEY=%s, CORP_ID=%s",
+                      bool(WECOM_TOKEN), bool(WECOM_ENCODING_AES_KEY), bool(WECOM_CORP_ID))
         return Response(content="wecom not configured", status_code=503)
 
     crypto = _get_crypto()
@@ -55,9 +60,14 @@ def verify_url(
         logger.warning("URL 验证签名失败")
         return Response(content="signature mismatch", status_code=403)
 
-    plain = crypto.decrypt(echostr)
-    logger.info("URL 验证成功")
-    return Response(content=plain, media_type="text/plain")
+    try:
+        plain = crypto.decrypt(echostr)
+        logger.info("URL 验证成功! 解密结果: %s", plain)
+        # 企微要求返回纯文本，不能有引号、BOM、换行
+        return Response(content=plain, media_type="text/plain")
+    except Exception as e:
+        logger.error("URL 验证解密失败: %s", e, exc_info=True)
+        return Response(content=f"decrypt error: {e}", status_code=500)
 
 
 @router.post("/callback")
