@@ -142,3 +142,118 @@ body {
 .bubble-ai .prose blockquote {
   border-left-color: var(--accent);
 }
+
+/* ========== 输出动画系统 ========== */
+
+/* 消息入场动画 */
+@keyframes msgSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.msg-enter {
+  animation: msgSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 流式输出光标 — 呼吸渐变效果 */
+@keyframes cursorBreathe {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scaleY(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+.stream-cursor {
+  display: inline-block;
+  width: 2.5px;
+  height: 18px;
+  margin-left: 2px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--accent), #a78bfa);
+  animation: cursorBreathe 1s ease-in-out infinite;
+  vertical-align: text-bottom;
+  box-shadow: 0 0 8px var(--accent-soft);
+}
+
+/* 思考中指示器 — 三点波浪 */
+@keyframes dotBounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 0;
+}
+.thinking-dots span {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: dotBounce 1.4s ease-in-out infinite;
+}
+.thinking-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.thinking-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* AI 头像流式状态光效 */
+@keyframes avatarPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+  }
+  50% {
+    box-shadow: 0 0 12px 2px rgba(99, 102, 241, 0.35);
+  }
+}
+
+.avatar-streaming {
+  animation: avatarPulse 2s ease-in-out infinite;
+}
+
+/* 工具执行卡片 */
+@keyframes toolShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.tool-running {
+  background: linear-gradient(90deg, transparent 0%, var(--accent-soft) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: toolShimmer 2s linear infinite;
+}
+
+/* 气泡内容淡入 */
+@keyframes contentFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.bubble-ai {
+  animation: contentFade 0.3s ease-out;
+}

@@ -392,8 +392,8 @@ function ChatView() {
             ) : (
               <div className="space-y-6">
                 {messages.map((msg, i) => (
-                  <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                    {msg.role === "assistant" && <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold text-xs shrink-0 mt-1">智</div>}
+                  <div key={i} className={`flex gap-3 msg-enter ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                    {msg.role === "assistant" && <div className={`w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold text-xs shrink-0 mt-1 ${streaming && i === messages.length - 1 ? "avatar-streaming" : ""}`}>智</div>}
                     <div className="max-w-[85%] sm:max-w-[75%]">
                       <div className={`px-4 py-3 ${msg.role === "user" ? "bubble-user whitespace-pre-wrap" : "bubble-ai"}`}>
                         {msg.role === "assistant" ? (
@@ -402,9 +402,9 @@ function ChatView() {
                           <div className="space-y-2"><textarea value={editText} onChange={(e) => setEditText(e.target.value)} className="w-full bg-transparent border border-white/20 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none min-h-[60px]" autoFocus /><div className="flex gap-2 justify-end"><button onClick={() => setEditingIdx(null)} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer">取消</button><button onClick={() => handleEditSave(i)} className="text-xs px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors cursor-pointer">保存并发送</button></div></div>
                         ) : msg.content}
                         {msg.attachment && <div className="mt-2">{msg.attachment.type === "image" && msg.attachment.preview ? <img src={msg.attachment.preview} alt={msg.attachment.name} className="max-w-[200px] max-h-[150px] rounded-lg border border-white/20" /> : <span className="inline-flex items-center gap-1 text-xs bg-black/10 px-2 py-1 rounded">📎 {msg.attachment.name}</span>}</div>}
-                        {msg.toolCalls && msg.toolCalls.length > 0 && <div className="mt-2 space-y-1">{msg.toolCalls.map((tc, j) => (<div key={j} className="flex items-center gap-1.5 text-xs text-gray-400">{tc.status === "running" ? <><span className="animate-spin inline-block">⏳</span><span>{getToolLabel(tc.tool, tc.args)}...</span></> : <><span>✅</span><span>{getToolLabel(tc.tool, tc.args)} — 完成</span></>}</div>))}</div>}
+                        {msg.toolCalls && msg.toolCalls.length > 0 && <div className="mt-2 space-y-1">{msg.toolCalls.map((tc, j) => (<div key={j} className="flex items-center gap-1.5 text-xs text-gray-400">{tc.status === "running" ? <><span className="thinking-dots"><span /><span /><span /></span><span className="tool-running px-1.5 py-0.5 rounded">{getToolLabel(tc.tool, tc.args)}</span></> : <><span className="text-green-400">✓</span><span>{getToolLabel(tc.tool, tc.args)}</span></>}</div>))}</div>}
                         {msg.todos && msg.todos.length > 0 && <div className="mt-2 p-2.5 rounded-lg bg-black/5 dark:bg-white/5 text-xs space-y-1.5"><div className="font-medium text-gray-500 dark:text-gray-400 mb-1">📋 任务规划</div>{msg.todos.map((todo, j) => (<div key={j} className="flex items-start gap-2"><span className="mt-0.5 shrink-0">{todo.status === "completed" ? "✅" : todo.status === "in_progress" ? "⏳" : "⬜"}</span><span className={todo.status === "completed" ? "line-through text-gray-400" : "text-gray-600 dark:text-gray-300"}>{todo.content}</span></div>))}</div>}
-                        {streaming && msg.role === "assistant" && i === messages.length - 1 && <span className="inline-block w-1.5 h-4 ml-0.5 bg-current animate-pulse align-text-bottom" />}
+                        {streaming && msg.role === "assistant" && i === messages.length - 1 && <span className="stream-cursor" />}
                       </div>
                       {!(streaming && i === messages.length - 1) && (
                         <div className={`flex items-center gap-1 mt-1 ml-1 transition-opacity ${mobileActionsIdx === i ? "opacity-100" : "opacity-0 max-sm:opacity-0"} hover:opacity-100 group-hover/msg:opacity-100`}>
