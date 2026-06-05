@@ -44,10 +44,6 @@ function ChatView() {
   const [editText, setEditText] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
-  const [schedTasks, setSchedTasks] = useState<{id: number; name: string; prompt: string; cron: string; enabled: boolean}[]>([]);
-  const [newTaskName, setNewTaskName] = useState("");
-  const [newTaskPrompt, setNewTaskPrompt] = useState("");
-  const [newTaskCron, setNewTaskCron] = useState("0 8 * * *");
   const [customPrompt, setCustomPrompt] = useState("");
   const [toasts, setToasts] = useState<{ id: number; message: string; type: "error" | "success" | "info" }[]>([]);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
@@ -205,7 +201,6 @@ function ChatView() {
     setShowMemories(true);
   }
 
-  function loadSchedTasks() { apiFetch("/scheduled-tasks").then((r) => r.json()).then((d) => { if (Array.isArray(d)) setSchedTasks(d); }).catch(() => showToast("加载定时任务失败")); }
 
   async function deleteMemory(memId: number) { await apiFetch(`/memories/${memId}`, { method: "DELETE" }); setMemories((prev) => prev.filter((m) => m.id !== memId)); }
 
@@ -352,7 +347,7 @@ function ChatView() {
           <div className="p-3 border-t border-[var(--border)] flex items-center justify-between">
             <button onClick={loadMemories} className="text-sm text-gray-500 hover:text-[var(--accent)] transition-colors cursor-pointer">记忆</button>
             <div className="flex items-center gap-1">
-              <button onClick={() => { setShowSettings(true); loadSchedTasks(); }} className="w-8 h-8 flex items-center justify-center rounded-lg glass glass-hover transition-colors text-sm cursor-pointer" title="设置">⚙️</button>
+              <button onClick={() => { setShowSettings(true); }} className="w-8 h-8 flex items-center justify-center rounded-lg glass glass-hover transition-colors text-sm cursor-pointer" title="设置">⚙️</button>
               <button onClick={toggle} className="w-8 h-8 flex items-center justify-center rounded-lg glass glass-hover transition-colors text-sm cursor-pointer" title={theme === "dark" ? "切换浅色" : "切换深色"}>{theme === "dark" ? "☀️" : "🌙"}</button>
             </div>
           </div>
@@ -368,7 +363,7 @@ function ChatView() {
           <button onClick={createConversation} className="w-9 h-9 rounded-lg glass glass-hover flex items-center justify-center text-sm transition-colors cursor-pointer" title="新对话">+</button>
           {activeConvId && messages.length > 0 && <button onClick={exportConversation} className="w-9 h-9 rounded-lg glass glass-hover flex items-center justify-center text-sm transition-colors cursor-pointer" title="导出对话">⬇</button>}
           <div className="flex-1" />
-          {models.length > 0 && <button onClick={() => { setShowSettings(true); loadSchedTasks(); }} className="sm:hidden text-[11px] text-gray-400 hover:text-[var(--accent)] transition-colors cursor-pointer truncate max-w-[80px]">{models.find((m) => m.key === selectedModel)?.name || selectedModel}</button>}
+          {models.length > 0 && <button onClick={() => { setShowSettings(true); }} className="sm:hidden text-[11px] text-gray-400 hover:text-[var(--accent)] transition-colors cursor-pointer truncate max-w-[80px]">{models.find((m) => m.key === selectedModel)?.name || selectedModel}</button>}
           <button onClick={toggle} className="w-9 h-9 rounded-lg glass glass-hover flex items-center justify-center text-sm transition-colors cursor-pointer" title={theme === "dark" ? "切换浅色" : "切换深色"}>{theme === "dark" ? "☀️" : "🌙"}</button>
         </header>
 
@@ -480,7 +475,6 @@ function ChatView() {
               <div className="space-y-2"><label className="text-sm font-medium text-gray-600 dark:text-gray-300">默认模型</label>{models.length > 0 ? <select value={selectedModel} onChange={(e) => { setSelectedModel(e.target.value); localStorage.setItem("defaultModel", e.target.value); }} className="w-full text-sm px-3 py-2 rounded-lg border border-[var(--border)] bg-transparent">{models.map((m) => (<option key={m.key} value={m.key}>{m.name}</option>))}</select> : <p className="text-sm text-gray-400">加载中...</p>}</div>
               <div className="space-y-2"><label className="text-sm font-medium text-gray-600 dark:text-gray-300">自定义指令</label><p className="text-[10px] text-gray-400">每次对话时注入到系统 prompt 中</p><textarea value={customPrompt} onChange={(e) => { setCustomPrompt(e.target.value); localStorage.setItem("customPrompt", e.target.value); }} placeholder="例：请用简洁的方式回答。" className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-transparent text-sm min-h-[80px] resize-none" /></div>
               <div className="space-y-2"><label className="text-sm font-medium text-gray-600 dark:text-gray-300">主题</label><div className="flex gap-2"><button onClick={() => { if (theme === "dark") toggle(); }} className={`flex-1 py-2 rounded-lg text-sm transition-colors cursor-pointer ${theme === "light" ? "bg-[var(--accent)] text-white" : "glass glass-hover"}`}>☀️ 浅色</button><button onClick={() => { if (theme === "light") toggle(); }} className={`flex-1 py-2 rounded-lg text-sm transition-colors cursor-pointer ${theme === "dark" ? "bg-[var(--accent)] text-white" : "glass glass-hover"}`}>🌙 深色</button></div></div>
-              <div className="space-y-2"><label className="text-sm font-medium text-gray-600 dark:text-gray-300">定时任务</label><div className="space-y-2 text-sm"><input value={newTaskName} onChange={(e) => setNewTaskName(e.target.value)} placeholder="任务名称" className="w-full px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm" /><input value={newTaskPrompt} onChange={(e) => setNewTaskPrompt(e.target.value)} placeholder="执行内容" className="w-full px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm" /><div className="flex gap-2"><input value={newTaskCron} onChange={(e) => setNewTaskCron(e.target.value)} placeholder="Cron" className="flex-1 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-xs font-mono" /><button onClick={async () => { if (!newTaskName.trim() || !newTaskPrompt.trim()) return; await apiFetch("/scheduled-tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: newTaskName, prompt: newTaskPrompt, cron: newTaskCron }) }); setNewTaskName(""); setNewTaskPrompt(""); loadSchedTasks(); }} disabled={!newTaskName.trim() || !newTaskPrompt.trim()} className="px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs disabled:opacity-40 cursor-pointer">添加</button></div><p className="text-[10px] text-gray-400">格式: 分 时 日 月 周</p></div>{schedTasks.length > 0 ? schedTasks.map((t) => (<div key={t.id} className="flex items-center gap-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 text-sm"><button onClick={async () => { await apiFetch(`/scheduled-tasks/${t.id}`, { method: "PATCH" }); loadSchedTasks(); }} className={`w-3 h-3 rounded-full shrink-0 cursor-pointer ${t.enabled ? "bg-green-500" : "bg-gray-300"}`} /><span className="flex-1 truncate">{t.name}</span><span className="text-[10px] text-gray-400 font-mono">{t.cron}</span><button onClick={async () => { await apiFetch(`/scheduled-tasks/${t.id}`, { method: "DELETE" }); loadSchedTasks(); }} className="text-gray-400 hover:text-red-500 text-xs cursor-pointer">x</button></div>)) : <p className="text-xs text-gray-400 text-center py-2">暂无定时任务</p>}</div>
               <div className="pt-3 border-t border-[var(--border)] space-y-1"><div className="flex items-center gap-2"><div className="w-6 h-6 rounded-md bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold text-xs">智</div><span className="text-sm font-medium">小智 AI</span><span className="text-xs text-gray-400">v{backendVersion}</span></div><p className="text-xs text-gray-400">基于 DeepAgent + LangChain 的个人 AI 助手</p></div>
             </div>
           </div>

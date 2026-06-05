@@ -2,17 +2,16 @@
 小智 AI - 后端入口（DeepAgents 版·自用单用户）
 
 路由结构：
-  GET  /                    健康检查
-  GET  /models              获取可用模型列表
-  GET  /conversations       获取所有对话
-  POST /conversations       新建对话
-  DELETE /conversations/{id} 删除对话
-  POST /chat/{conv_id}      聊天（SSE 流式）
-  GET  /memories            获取记忆
-  DELETE /memories/{id}     删除记忆
-  POST /documents/upload    上传知识库文档
-  GET  /documents           获取文档列表
-  DELETE /documents/{id}    删除文档
+  GET  /                       健康检查
+  GET  /models                 获取可用模型列表
+  GET  /conversations          获取所有对话
+  POST /conversations          新建对话
+  DELETE /conversations/{id}   删除对话
+  PATCH /conversations/{id}    更新对话
+  POST /chat/{conv_id}         聊天（SSE 流式）
+  GET  /memories               获取记忆
+  DELETE /memories/{id}        删除记忆
+  POST /stt                    语音转文字
 """
 import os
 # 绕过系统代理直连 API（代理会导致 Python 3.14 SSL 握手失败）
@@ -32,7 +31,7 @@ from sqlalchemy.orm import Session
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 from database import get_db, engine, Base
-from models import Conversation, Message, Memory, ScheduledTask
+from models import Conversation, Message, Memory
 from llm import get_llm, get_available_models
 from agent import create_agent
 from agent.prompt import SYSTEM_PROMPT
@@ -202,7 +201,7 @@ def search_messages(q: str = "", db: Session = Depends(get_db)):
 def list_conversations(request: Request, db: Session = Depends(get_db)):
     """获取当前设备的所有对话列表"""
     ctx = get_device_context(db, request)
-    convs = db.query(Conversation).filter(Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).order_by(Conversation.created_at.desc()).all()
+    convs = db.query(Conversation).filter(Conversation.user_id == USER_ID).order_by(Conversation.created_at.desc()).all()
     return [
         {"id": c.id, "title": c.title, "created_at": c.created_at.isoformat(), "pinned": c.pinned or False}
         for c in convs
@@ -224,7 +223,7 @@ def create_conversation(req: NewConversationRequest, request: Request, db: Sessi
 def delete_conversation(conv_id: int, request: Request, db: Session = Depends(get_db)):
     """删除对话及其所有消息"""
     ctx = get_device_context(db, request)
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
     db.delete(conv)
@@ -236,7 +235,7 @@ def delete_conversation(conv_id: int, request: Request, db: Session = Depends(ge
 def update_conversation(conv_id: int, request: Request, title: str | None = None, pinned: bool | None = None, db: Session = Depends(get_db)):
     """更新对话标题或置顶状态（同时支持 query param 和 JSON body）"""
     ctx = get_device_context(db, request)
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
     # 优先用 query param（绕过 HF 代理中文 body 问题）
@@ -264,7 +263,7 @@ def update_conversation(conv_id: int, request: Request, title: str | None = None
 def get_messages(conv_id: int, request: Request, db: Session = Depends(get_db)):
     """获取某个对话的所有消息"""
     ctx = get_device_context(db, request)
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
     msgs = db.query(Message).filter(Message.conversation_id == conv_id).order_by(Message.created_at).all()
@@ -279,7 +278,7 @@ class BranchRequest(BaseModel):
 def branch_conversation(conv_id: int, req: BranchRequest, request: Request, db: Session = Depends(get_db)):
     """从某条消息分叉出新对话"""
     ctx = get_device_context(db, request)
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
 
@@ -304,28 +303,18 @@ def branch_conversation(conv_id: int, req: BranchRequest, request: Request, db: 
 @app.get("/devices")
 def list_devices(db: Session = Depends(get_db)):
     """列出所有已知设备"""
-    ctx = get_device_context(db, request)
-    """从某条消息分叉出新对话"""
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
-    if not conv:
-        raise HTTPException(status_code=404, detail="对话不存在")
-
-    msgs = db.query(Message).filter(Message.conversation_id == conv_id).order_by(Message.created_at).all()
-    if req.from_message_index < 0 or req.from_message_index >= len(msgs):
-        raise HTTPException(status_code=400, detail="消息索引无效")
-
-    # 创建新对话
-    new_conv = Conversation(title=conv.title + " (分支)", user_id=USER_ID, device_id=ctx.device_id)
-    db.add(new_conv)
-    db.commit()
-    db.refresh(new_conv)
-
-    # 复制 from_message_index 之前的消息
-    for m in msgs[:req.from_message_index]:
-        db.add(Message(role=m.role, content=m.content, conversation_id=new_conv.id))
-    db.commit()
-
-    return {"id": new_conv.id, "title": new_conv.title}
+    from device import Device
+    devices = db.query(Device).order_by(Device.last_seen.desc()).all()
+    return [
+        {
+            "device_id": d.device_id,
+            "device_type": d.device_type,
+            "browser": d.browser,
+            "os_name": d.os_name,
+            "last_seen": d.last_seen.isoformat(),
+        }
+        for d in devices
+    ]
 
 
 
@@ -398,7 +387,7 @@ async def chat(
 ):
     """在指定对话中聊天，支持文件上传，SSE 流式返回"""
     ctx = get_device_context(db, request)
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
 
@@ -554,53 +543,6 @@ def delete_memory(mem_id: int, db: Session = Depends(get_db)):
     if not mem:
         raise HTTPException(status_code=404, detail="记忆不存在")
     db.delete(mem)
-    db.commit()
-    return {"ok": True}
-
-
-# ---------- 定时任务接口 ----------
-
-class NewTaskRequest(BaseModel):
-    name: str
-    prompt: str
-    cron: str  # e.g. "0 8 * * *" = 每天8点
-
-
-@app.get("/scheduled-tasks")
-def list_tasks(db: Session = Depends(get_db)):
-    """获取所有定时任务"""
-    tasks = db.query(ScheduledTask).filter(ScheduledTask.user_id == USER_ID).order_by(ScheduledTask.created_at.desc()).all()
-    return [{"id": t.id, "name": t.name, "prompt": t.prompt, "cron": t.cron, "enabled": t.enabled} for t in tasks]
-
-
-@app.post("/scheduled-tasks")
-def create_task(req: NewTaskRequest, db: Session = Depends(get_db)):
-    """创建定时任务"""
-    task = ScheduledTask(user_id=USER_ID, name=req.name, prompt=req.prompt, cron=req.cron)
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-    return {"id": task.id, "name": task.name, "prompt": task.prompt, "cron": task.cron, "enabled": task.enabled}
-
-
-@app.patch("/scheduled-tasks/{task_id}")
-def toggle_task(task_id: int, db: Session = Depends(get_db)):
-    """切换定时任务开关"""
-    task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id, ScheduledTask.user_id == USER_ID).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    task.enabled = not task.enabled
-    db.commit()
-    return {"id": task.id, "enabled": task.enabled}
-
-
-@app.delete("/scheduled-tasks/{task_id}")
-def delete_task(task_id: int, db: Session = Depends(get_db)):
-    """删除定时任务"""
-    task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id, ScheduledTask.user_id == USER_ID).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    db.delete(task)
     db.commit()
     return {"ok": True}
 

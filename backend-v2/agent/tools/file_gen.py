@@ -125,20 +125,64 @@ def _gen_xlsx(filename: str, content: str, timestamp: str) -> str:
 
 
 def _gen_pdf(filename: str, content: str, timestamp: str) -> str:
-    """生成 PDF 文件"""
-    import fitz  # PyMuPDF
+    """生成 PDF 文件（支持中文）"""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.enums import TA_LEFT
 
-    doc = fitz.open()
-    page = doc.new_page()
-    # 简单文本插入
-    text_rect = fitz.Rect(50, 50, 550, 800)
-    page.insert_textbox(text_rect, content, fontsize=11, fontname="helv")
+    # 注册中文字体（使用系统自带字体）
+    _registered = False
+    for font_path in [
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",  # Linux
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",         # Linux 备选
+        "C:/Windows/Fonts/msyh.ttc",                                # Windows 微软雅黑
+        "/System/Library/Fonts/PingFang.ttc",                       # macOS
+    ]:
+        if os.path.exists(font_path):
+            try:
+                pdfmetrics.registerFont(TTFont("Chinese", font_path, subfontIndex=0))
+                _registered = True
+                break
+            except Exception:
+                continue
 
     fname = f"{filename}_{timestamp}.pdf"
     path = os.path.join(FILES_DIR, fname)
-    doc.save(path)
-    doc.close()
-    logger.info(f"生成 PDF 文件: {fname}")
+
+    doc = SimpleDocTemplate(path, pagesize=A4, topMargin=20*mm, bottomMargin=20*mm, leftMargin=20*mm, rightMargin=20*mm)
+
+    styles = getSampleStyleSheet()
+    if _registered:
+        style_normal = ParagraphStyle("ChineseNormal", parent=styles["Normal"], fontName="Chinese", fontSize=11, leading=18)
+        style_title = ParagraphStyle("ChineseTitle", parent=styles["Heading1"], fontName="Chinese", fontSize=16, leading=24)
+        style_h2 = ParagraphStyle("ChineseH2", parent=styles["Heading2"], fontName="Chinese", fontSize=13, leading=20)
+    else:
+        # 没有中文字体时降级，中文会显示为方块但至少不报错
+        style_normal = ParagraphStyle("Fallback", parent=styles["Normal"], fontSize=11, leading=18)
+        style_title = ParagraphStyle("FallbackTitle", parent=styles["Heading1"], fontSize=16, leading=24)
+        style_h2 = ParagraphStyle("FallbackH2", parent=styles["Heading2"], fontSize=13, leading=20)
+
+    elements = []
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            elements.append(Spacer(1, 4*mm))
+            continue
+        # 简单标题检测
+        if stripped.startswith("# "):
+            elements.append(Paragraph(stripped[2:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), style_title))
+        elif stripped.startswith("## "):
+            elements.append(Paragraph(stripped[3:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), style_h2))
+        else:
+            elements.append(Paragraph(stripped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), style_normal))
+
+    doc.build(elements)
+    logger.info(f"生成 PDF 文件（中文支持）: {fname}")
     return f"文件已生成！\n[点击下载: {fname}]({BACKEND_URL}/files/{fname})\n文件格式: PDF (.pdf)"
 
 

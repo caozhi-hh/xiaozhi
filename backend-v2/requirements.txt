@@ -34,9 +34,7 @@ PyMuPDF
 Pillow
 python-docx
 openpyxl
-
-# Scheduler
-APScheduler
+reportlab
 
 # WeChat Work encryption
 pycryptodome

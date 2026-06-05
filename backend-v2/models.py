@@ -48,17 +48,6 @@ class Memory(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
-class ScheduledTask(Base):
-    __tablename__ = "scheduled_tasks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, default=1)
-    name = Column(String, nullable=False)
-    prompt = Column(Text, nullable=False)
-    cron = Column(String, nullable=False)
-    enabled = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
 
 class Device(Base):
     __tablename__ = "devices"
