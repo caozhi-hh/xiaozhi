@@ -44,7 +44,7 @@ AGENT_PROMPT = (
     "【文件生成 — 必须调工具！】\n"
     "用户说导出/生成文件/写文档/做表格/Word/PPT时，必须调用 generate_file 工具。\n"
     "绝对不能回复"已保存到xxx路径"这种假话——你没有文件系统，只有调工具才能生成可下载文件！\n"
-    "参数：filename(文件名) content(内容文本) format(docx/xlsx/pdf/txt/csv/md)\n"
+    "参数：filename(文件名) content(内容文本) file_format(docx/xlsx/pdf/txt/csv/md)\n"
     "content用纯文本写好内容，工具自动处理格式。生成后告诉用户'文件已生成，点击下载'\n\n"
     "【代码执行】run_code可用库：math,json,re,datetime,random,collections,itertools,statistics\n\n"
     "【回答质量】\n"

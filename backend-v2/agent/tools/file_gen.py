@@ -28,20 +28,20 @@ def _safe_filename(name: str) -> str:
 
 
 @tool
-def generate_file(filename: str, content: str, format: str = "txt") -> str:
+def generate_file(filename: str, content: str, file_format: str = "txt") -> str:
     """根据内容生成文件并返回下载链接。当用户要求导出文件、生成Word文档、做表格、写文档时必须调用此工具。绝对不能假装生成了文件，必须调用此工具才能真正生成可下载的文件。
 
     Args:
         filename: 文件名（不含扩展名），如"AI总结报告"
         content: 文件内容（文本格式）
-        format: 文件格式，支持 docx/xlsx/txt/csv/md/pdf
+        file_format: 文件格式，支持 docx/xlsx/txt/csv/md/pdf
 
     Returns:
         下载链接或错误信息
     """
     _ensure_dir()
     filename = _safe_filename(filename)
-    fmt = format.lower().strip()
+    fmt = file_format.lower().strip()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     try:

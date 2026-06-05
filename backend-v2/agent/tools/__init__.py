@@ -17,6 +17,10 @@ for _tool_mod, _tool_name in [
     try:
         import importlib
         mod = importlib.import_module(_tool_mod)
-        ALL_TOOLS.append(getattr(mod, _tool_name))
+        tool_obj = getattr(mod, _tool_name)
+        ALL_TOOLS.append(tool_obj)
+        logger.info(f"工具注册成功: {_tool_name} (type={type(tool_obj).__name__})")
     except Exception as e:
-        logger.warning(f"工具 {_tool_name} 加载失败: {e}")
+        logger.error(f"工具 {_tool_name} 加载失败: {e}")
+
+logger.info(f"共注册 {len(ALL_TOOLS)} 个工具: {[t.name if hasattr(t, 'name') else str(t) for t in ALL_TOOLS]}")
