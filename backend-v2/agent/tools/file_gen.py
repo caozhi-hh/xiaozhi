@@ -2,6 +2,7 @@
 import os
 import logging
 from datetime import datetime
+from langchain_core.tools import tool
 
 logger = logging.getLogger("file_gen")
 
@@ -26,8 +27,9 @@ def _safe_filename(name: str) -> str:
     return name.strip()
 
 
+@tool
 def generate_file(filename: str, content: str, format: str = "txt") -> str:
-    """根据内容生成文件并返回下载链接。
+    """根据内容生成文件并返回下载链接。当用户要求导出文件、生成Word文档、做表格、写文档时必须调用此工具。绝对不能假装生成了文件，必须调用此工具才能真正生成可下载的文件。
 
     Args:
         filename: 文件名（不含扩展名），如"AI总结报告"

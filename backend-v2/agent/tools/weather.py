@@ -2,8 +2,10 @@
 import json
 import urllib.request
 import urllib.parse
+from langchain_core.tools import tool
 
 
+@tool
 def get_weather(city: str) -> str:
     """查询指定城市的当前天气。当用户问天气、温度、是否下雨等问题时使用。"""
     try:
