@@ -18,7 +18,6 @@ os.environ['no_proxy'] = '*'
 
 from pathlib import Path
 from langchain_openai import ChatOpenAI
-from langchain_community.embeddings import DashScopeEmbeddings
 from dotenv import load_dotenv, dotenv_values
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -79,25 +78,6 @@ def get_llm(model_key: str = "glm-4-flash") -> ChatOpenAI:
     )
     _llm_cache[model_key] = llm
     return llm
-
-
-_embeddings_cache = None
-
-def get_embeddings() -> DashScopeEmbeddings:
-    """获取 DashScope Embedding 客户端（text-embedding-v3）"""
-    global _embeddings_cache
-    if _embeddings_cache:
-        return _embeddings_cache
-
-    qwen_config = MODELS.get("qwen-max") or MODELS.get("qwen-turbo")
-    if not qwen_config:
-        raise RuntimeError("未找到 DashScope 模型配置，无法初始化 Embedding")
-
-    _embeddings_cache = DashScopeEmbeddings(
-        model="text-embedding-v3",
-        dashscope_api_key=qwen_config["api_key"],
-    )
-    return _embeddings_cache
 
 
 def get_available_models() -> list[dict]:

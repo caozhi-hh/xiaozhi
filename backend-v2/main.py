@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 from database import get_db, engine, Base
-from models import Conversation, Message, Memory, Document, ScheduledTask
+from models import Conversation, Message, Memory, ScheduledTask
 from llm import get_llm, get_available_models
 from agent import create_agent
 from agent.prompt import SYSTEM_PROMPT
@@ -42,7 +42,6 @@ from agent.meme_fetcher import refresh_memes, start_background_refresh
 from file_handler import is_image, is_pdf, is_docx, is_xlsx, extract_text, image_to_base64
 from config import SILICONFLOW_API_KEY
 from memory import extract_memories
-from rag import ingest_document, search_knowledge, delete_document_vectors
 
 # 创建所有数据库表（如果不存在）
 Base.metadata.create_all(bind=engine)
@@ -351,7 +350,7 @@ def _sse(event: dict) -> str:
 
 
 def _build_messages(history, user_id=None, db=None, query=None, device_ctx=None):
-    """从数据库历史记录构建 LangChain 消息列表，注入用户记忆和知识库"""
+    """从数据库历史记录构建 LangChain 消息列表，注入用户记忆"""
     system_content = SYSTEM_PROMPT
 
     # 注入设备信息
@@ -366,17 +365,6 @@ def _build_messages(history, user_id=None, db=None, query=None, device_ctx=None)
         if mems:
             mem_text = "\n\n【关于用户的记忆】\n" + "\n".join(f"- [{m.category}] {m.content}" for m in mems)
             system_content += mem_text
-
-        # 注入知识库检索
-        if query:
-            docs = db.query(Document).filter(Document.user_id == user_id).count()
-            if docs > 0:
-                results = search_knowledge(user_id, query)
-                if results:
-                    rag_text = "\n\n【知识库参考】\n" + "\n".join(
-                        f"- [来源: {r['filename']}] {r['content']}" for r in results
-                    )
-                    system_content += rag_text
 
     messages = [SystemMessage(content=system_content)]
     for m in history:
@@ -554,59 +542,6 @@ def delete_memory(mem_id: int, db: Session = Depends(get_db)):
     if not mem:
         raise HTTPException(status_code=404, detail="记忆不存在")
     db.delete(mem)
-    db.commit()
-    return {"ok": True}
-
-
-# ---------- 知识库接口 ----------
-
-@app.post("/documents/upload")
-async def upload_document(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    """上传文档到知识库"""
-    filename = file.filename or "unknown.txt"
-    file_bytes = await file.read()
-
-    # 提取文字
-    text = extract_text(file_bytes, filename)
-    if not text:
-        raise HTTPException(status_code=400, detail="仅支持 PDF、Word、Excel、TXT、MD 格式")
-
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="文档内容为空")
-
-    # 存元数据
-    file_type = filename.rsplit(".", 1)[-1].lower()
-    doc = Document(user_id=USER_ID, filename=filename, file_type=file_type)
-    db.add(doc)
-    db.commit()
-    db.refresh(doc)
-
-    # 向量化
-    chunk_count = ingest_document(USER_ID, doc.id, filename, text)
-    doc.chunk_count = chunk_count
-    db.commit()
-
-    return {"id": doc.id, "filename": filename, "chunks": chunk_count}
-
-
-@app.get("/documents")
-def list_documents(db: Session = Depends(get_db)):
-    """获取用户的知识库文档列表"""
-    docs = db.query(Document).filter(Document.user_id == USER_ID).order_by(Document.created_at.desc()).all()
-    return [{"id": d.id, "filename": d.filename, "file_type": d.file_type, "chunks": d.chunk_count, "created_at": d.created_at.isoformat()} for d in docs]
-
-
-@app.delete("/documents/{doc_id}")
-def delete_document(doc_id: int, db: Session = Depends(get_db)):
-    """删除知识库文档"""
-    doc = db.query(Document).filter(Document.id == doc_id, Document.user_id == USER_ID).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="文档不存在")
-    delete_document_vectors(USER_ID, doc.id)
-    db.delete(doc)
     db.commit()
     return {"ok": True}
 

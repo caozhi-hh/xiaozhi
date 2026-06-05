@@ -4,7 +4,6 @@
 关系：
   Conversation 1 ←→ N Message
   Memory（独立，按 user_id 过滤）
-  Document（独立，按 user_id 过滤）
 """
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
@@ -47,17 +46,6 @@ class Memory(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-
-class Document(Base):
-    __tablename__ = "documents"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, default=1)
-    filename = Column(String, nullable=False)
-    file_type = Column(String, nullable=False)
-    chunk_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class ScheduledTask(Base):

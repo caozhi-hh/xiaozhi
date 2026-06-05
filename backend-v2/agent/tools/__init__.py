@@ -8,9 +8,11 @@ ALL_TOOLS = []
 for _tool_mod, _tool_name in [
     ("agent.tools.web_search", "web_search"),
     ("agent.tools.weather", "get_weather"),
-    ("agent.tools.translate", "translate"),
     ("agent.tools.file_gen", "generate_file"),
     ("agent.tools.code_runner", "run_code"),
+    ("agent.tools.image_gen", "generate_image"),
+    ("agent.tools.datetime_tool", "get_current_datetime"),
+    ("agent.tools.web_reader", "fetch_webpage"),
 ]:
     try:
         import importlib

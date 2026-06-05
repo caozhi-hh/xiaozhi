@@ -38,9 +38,5 @@ openpyxl
 # Scheduler
 APScheduler
 
-# Embeddings (RAG)
-chromadb
-langchain-chroma
-
 # WeChat Work encryption
 pycryptodome

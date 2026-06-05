@@ -34,8 +34,6 @@ function ChatView() {
   const [memories, setMemories] = useState<{id: number; category: string; content: string}[]>([]);
   const [profile, setProfile] = useState<Record<string, string[]>>({});
   const [memTab, setMemTab] = useState<"memories" | "profile">("memories");
-  const [docs, setDocs] = useState<{id: number; filename: string; chunks: number}[]>([]);
-  const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
   const [sttLoading, setSttLoading] = useState(false);
   const [sttError, setSttError] = useState("");
@@ -66,7 +64,6 @@ function ChatView() {
   const [sidebarWidth, setSidebarWidth] = useState(288);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number>(0);
-  const docInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -167,7 +164,6 @@ function ChatView() {
   useEffect(() => {
     apiFetch("/conversations").then((r) => r.json()).then((d) => { if (Array.isArray(d)) setConversations(d); }).catch(() => {});
     apiFetch("/models").then((r) => r.json()).then((d) => { if (Array.isArray(d) && d.length > 0) { setModels(d); const s = localStorage.getItem("defaultModel"); setSelectedModel(s && d.some(m => m.key === s) ? s : d[0].key); } }).catch(() => {});
-    apiFetch("/documents").then((r) => r.json()).then((d) => { if (Array.isArray(d)) setDocs(d); }).catch(() => {});
     apiFetch("/suggestions").then((r) => r.json()).then((d) => { if (Array.isArray(d) && d.length > 0) setSuggestions(d); }).catch(() => {});
     apiFetch("/").then((r) => r.json()).then((d) => { if (d.version) setBackendVersion(d.version); }).catch(() => {});
   }, []);
@@ -211,14 +207,6 @@ function ChatView() {
   function loadSchedTasks() { apiFetch("/scheduled-tasks").then((r) => r.json()).then((d) => { if (Array.isArray(d)) setSchedTasks(d); }).catch(() => showToast("加载定时任务失败")); }
 
   async function deleteMemory(memId: number) { await apiFetch(`/memories/${memId}`, { method: "DELETE" }); setMemories((prev) => prev.filter((m) => m.id !== memId)); }
-
-  async function uploadDoc(file: File) {
-    setUploading(true); const fd = new FormData(); fd.append("file", file);
-    try { const res = await apiFetch("/documents/upload", { method: "POST", body: fd }); if (res.ok) { loadDocs(); showToast("上传成功", "success"); } else { const d = await res.json(); showToast(d.detail || "上传失败"); } } catch { showToast("上传失败"); }
-    setUploading(false);
-  }
-  function loadDocs() { apiFetch("/documents").then((r) => r.json()).then((d) => { if (Array.isArray(d)) setDocs(d); }).catch(() => {}); }
-  async function deleteDoc(docId: number) { await apiFetch(`/documents/${docId}`, { method: "DELETE" }); setDocs((prev) => prev.filter((d) => d.id !== docId)); }
 
   async function handleSend() {
     const text = input.trim();
@@ -360,10 +348,6 @@ function ChatView() {
               ));
             })()}
           </div>
-          <div className="border-t border-[var(--border)] p-3 space-y-2">
-            <div className="flex items-center justify-between"><span className="text-xs font-medium text-gray-500">知识库</span><button onClick={() => docInputRef.current?.click()} disabled={uploading} className="text-xs px-2 py-1 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity">{uploading ? "上传中..." : "+ 上传"}</button><input ref={docInputRef} type="file" accept=".pdf,.docx,.xlsx,.txt,.md" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { uploadDoc(f); e.target.value = ""; } }} /></div>
-            {docs.length > 0 ? docs.map((d) => (<div key={d.id} className="flex items-center gap-1 text-xs text-gray-500 group"><span className="flex-1 truncate">{d.filename}</span><span className="text-gray-400">{d.chunks}块</span><button onClick={() => deleteDoc(d.id)} className="opacity-0 max-sm:opacity-60 group-hover:opacity-100 text-red-400 hover:text-red-600">x</button></div>)) : <p className="text-xs text-gray-400">上传文档，小智会学习其中的知识</p>}
-          </div>
           <div className="p-3 border-t border-[var(--border)] flex items-center justify-between">
             <button onClick={loadMemories} className="text-sm text-gray-500 hover:text-[var(--accent)] transition-colors cursor-pointer">记忆</button>
             <div className="flex items-center gap-1">
@@ -451,7 +435,13 @@ function ChatView() {
             )}
             {pendingFile && <div className="flex items-center gap-2 mb-2 text-sm text-gray-500 glass rounded-lg px-3 py-1.5"><span>📎 {pendingFile.name}</span><button onClick={() => setPendingFile(null)} className="text-gray-400 hover:text-red-500 cursor-pointer">✕</button></div>}
             <div className="relative flex items-end gap-2 input-glow rounded-xl p-2">
-              <input ref={fileInputRef} type="file" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg,.gif,.webp" className="hidden" onChange={(e) => { if (e.target.files?.[0]) setPendingFile(e.target.files[0]); e.target.value = ""; }} />
+              <input ref={fileInputRef} type="file" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg,.gif,.webp,image/*" className="hidden" onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                // 移动端检测：非本地文件（微信/云盘分享的 blob）通常 size=0 或 type 为空
+                if (f.size === 0) { showToast("无法读取该文件，请从本地文件选择", "error"); e.target.value = ""; return; }
+                setPendingFile(f); e.target.value = "";
+              }} />
               <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 rounded-lg text-gray-400 hover:text-[var(--accent)] hover:bg-[var(--accent-soft)] flex items-center justify-center text-lg transition-colors shrink-0 cursor-pointer" title="上传文件">📎</button>
               <textarea value={input} onChange={(e) => { setInput(e.target.value); setShowCommands(e.target.value === "/"); }} onKeyDown={handleKeyDown} placeholder={pendingFile ? "输入对文件的提问..." : "给小智发消息...  输入 / 使用快捷指令"} rows={1} className="flex-1 resize-none rounded-lg px-3 py-2 focus:outline-none bg-transparent text-sm min-h-[36px] max-h-[120px]" />
               {showCommands && (<div className="absolute bottom-full left-0 right-0 mb-2 glass rounded-xl p-2 shadow-lg max-h-[240px] overflow-y-auto">{QUICK_COMMANDS.map((cmd) => (<button key={cmd.name} onClick={() => { setInput(cmd.prompt); setShowCommands(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-left hover:bg-[var(--accent-soft)] transition-colors cursor-pointer"><span>{cmd.icon}</span><span className="font-medium">{cmd.name}</span><span className="text-xs text-gray-400 flex-1 truncate">{cmd.prompt.slice(0, 30)}...</span></button>))}</div>)}
