@@ -157,7 +157,7 @@ function ChatView() {
   function stopStreaming() { abortRef.current?.abort(); }
 
   async function updateConversationTitle(convId: number, title: string) {
-    await apiFetch(`/conversations/${convId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) });
+    await apiFetch(`/conversations/${convId}`, { method: "PATCH", headers: { "Content-Type": "application/json; charset=utf-8" }, body: JSON.stringify({ title }) });
     setConversations((prev) => prev.map((c) => (c.id === convId ? { ...c, title } : c)));
   }
 
@@ -179,7 +179,7 @@ function ChatView() {
   useEffect(() => { const id = setInterval(() => { apiFetch("/").catch(() => {}); }, 10 * 60 * 1000); return () => clearInterval(id); }, []);
 
   async function createConversation() {
-    const res = await apiFetch("/conversations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "新对话" }) });
+    const res = await apiFetch("/conversations", { method: "POST" });
     const conv = await res.json(); setConversations((prev) => [conv, ...prev]); setActiveConvId(conv.id); setMessages([]);
   }
 

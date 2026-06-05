@@ -102,7 +102,7 @@ if wecom_router:
 # ---------- 请求格式 ----------
 
 class NewConversationRequest(BaseModel):
-    title: str | None = "新对话"
+    title: str | None = None
 
 
 class UpdateConversationRequest(BaseModel):
