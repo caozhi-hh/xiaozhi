@@ -233,16 +233,28 @@ def delete_conversation(conv_id: int, request: Request, db: Session = Depends(ge
 
 
 @app.patch("/conversations/{conv_id}")
-def update_conversation(conv_id: int, req: UpdateConversationRequest, request: Request, db: Session = Depends(get_db)):
-    """更新对话标题或置顶状态"""
+def update_conversation(conv_id: int, request: Request, title: str | None = None, pinned: bool | None = None, db: Session = Depends(get_db)):
+    """更新对话标题或置顶状态（同时支持 query param 和 JSON body）"""
     ctx = get_device_context(db, request)
     conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
-    if req.title is not None:
-        conv.title = req.title
-    if req.pinned is not None:
-        conv.pinned = req.pinned
+    # 优先用 query param（绕过 HF 代理中文 body 问题）
+    if title is not None:
+        from urllib.parse import unquote
+        conv.title = unquote(title)
+    if pinned is not None:
+        conv.pinned = pinned
+    # 兜底：尝试从 body 读取
+    if title is None and pinned is None:
+        try:
+            body = UpdateConversationRequest(**(request.state.json_body if hasattr(request.state, 'json_body') else {}))
+            if body.title is not None:
+                conv.title = body.title
+            if body.pinned is not None:
+                conv.pinned = body.pinned
+        except Exception:
+            pass
     db.commit()
     db.refresh(conv)
     return {"id": conv.id, "title": conv.title, "pinned": conv.pinned or False}
