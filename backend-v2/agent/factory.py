@@ -7,7 +7,8 @@ Agent 工厂 — 用 DeepAgents create_deep_agent 创建 Agent
 from deepagents import create_deep_agent
 
 from agent.tools import ALL_TOOLS
-from agent.prompt import AGENT_PROMPT
+from agent.prompt import SYSTEM_PROMPT, AGENT_PROMPT
+from agent.meme_fetcher import get_memes
 from llm import get_llm
 
 _agent_cache: dict = {}
@@ -44,11 +45,15 @@ def create_agent(model_key: str, enable_subagents: bool = True):
 
     llm = get_llm(model_key)
 
+    # 动态注入当前热梗到 system prompt
+    memes = get_memes()
+    full_prompt = SYSTEM_PROMPT + f"\n\n【当前热门梗库（定期自动更新）】\n{memes}\n用法：自然融入对话，不要生硬插入，要玩出新花样。"
+
     try:
         kwargs = {
             "model": llm,
             "tools": ALL_TOOLS,
-            "system_prompt": AGENT_PROMPT,
+            "system_prompt": AGENT_PROMPT + "\n\n" + full_prompt,
         }
 
         if enable_subagents:

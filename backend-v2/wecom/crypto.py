@@ -39,8 +39,13 @@ class WeComCrypto:
             logger.debug("签名不匹配: expected=%s, got=%s", signature, sha1)
         return match
 
-    def decrypt(self, encrypt_text: str) -> str:
-        """解密消息，返回明文字符串"""
+    def decrypt(self, encrypt_text: str, verify_corp_id: bool = True) -> str:
+        """解密消息，返回明文字符串
+
+        Args:
+            encrypt_text: 加密的 Base64 字符串
+            verify_corp_id: 是否校验 CorpID（URL验证的echostr不含CorpID）
+        """
         try:
             ciphertext = base64.b64decode(encrypt_text)
             cipher = AES.new(self.aes_key, AES.MODE_CBC, self.iv)
@@ -58,12 +63,14 @@ class WeComCrypto:
 
             msg_len = struct.unpack(">I", plain[16:20])[0]
             msg = plain[20: 20 + msg_len].decode("utf-8")
-            corp_id = plain[20 + msg_len:].decode("utf-8")
+            tail = plain[20 + msg_len:]
 
-            if corp_id != self.corp_id:
-                raise ValueError(f"CorpID mismatch: expected {self.corp_id}, got {corp_id}")
+            if verify_corp_id and tail:
+                corp_id = tail.decode("utf-8")
+                if corp_id != self.corp_id:
+                    raise ValueError(f"CorpID mismatch: expected {self.corp_id}, got {corp_id}")
 
-            logger.info("解密成功: msg_len=%d", msg_len)
+            logger.info("解密成功: msg_len=%d, tail_len=%d", msg_len, len(tail))
             return msg
         except Exception as e:
             logger.error("解密失败: %s", e, exc_info=True)

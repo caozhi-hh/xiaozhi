@@ -20,6 +20,7 @@ os.environ['NO_PROXY'] = '*'
 os.environ['no_proxy'] = '*'
 
 import json
+import logging
 import asyncio
 import httpx
 
@@ -28,13 +29,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 from database import get_db, engine, Base
 from models import Conversation, Message, Memory, Document, ScheduledTask
 from llm import get_llm, get_available_models
 from agent import create_agent
 from agent.prompt import SYSTEM_PROMPT
+from device import get_device_context, DeviceContext
+from fastapi import Request
+from agent.meme_fetcher import refresh_memes, start_background_refresh
 from file_handler import is_image, is_pdf, is_docx, is_xlsx, extract_text, image_to_base64
 from config import SILICONFLOW_API_KEY
 from memory import extract_memories
@@ -43,7 +47,29 @@ from rag import ingest_document, search_knowledge, delete_document_vectors
 # 创建所有数据库表（如果不存在）
 Base.metadata.create_all(bind=engine)
 
+# 自动迁移：给 conversations 表添加 device_id 列
+def _migrate_device_id():
+    import sqlite3
+    from database import DB_PATH
+    if not DB_PATH.startswith("sqlite"):
+        return
+    db_path = DB_PATH.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()]
+        if "device_id" not in cols:
+            conn.execute("ALTER TABLE conversations ADD COLUMN device_id VARCHAR DEFAULT 'web-default'")
+            conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+_migrate_device_id()
+
 app = FastAPI(title="小智 AI", version="0.5.0")
+logger = logging.getLogger("xiaozhi.main")
 
 ALLOWED_ORIGINS = [
     "https://xiaozhi-ex8.pages.dev",
@@ -59,6 +85,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
 # Render 使用 PORT 环境变量
@@ -88,7 +115,7 @@ class UpdateConversationRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "ok", "message": "小智 AI 后端运行中"}
+    return {"status": "ok", "message": "小智 AI 后端运行中", "version": app.version}
 
 
 @app.get("/models")
@@ -96,12 +123,87 @@ def models_list():
     return get_available_models()
 
 
+DEFAULT_SUGGESTIONS = [
+    {"icon": "💡", "text": "帮我分析一下今天适合学什么"},
+    {"icon": "🔍", "text": "搜索一下最近的 AI 新闻"},
+    {"icon": "🎯", "text": "聊聊你的能力吧"},
+]
+
+
+@app.get("/suggestions")
+def get_suggestions(db: Session = Depends(get_db)):
+    mems = db.query(Memory).filter(Memory.user_id == USER_ID).order_by(Memory.updated_at.desc()).limit(10).all()
+    recent_convs = db.query(Conversation).filter(Conversation.user_id == USER_ID).order_by(Conversation.created_at.desc()).limit(10).all()
+
+    if len(mems) < 2 and len(recent_convs) < 3:
+        return DEFAULT_SUGGESTIONS
+
+    mem_summary = "\n".join(f"- [{m.category}] {m.content}" for m in mems[:5])
+    conv_titles = ", ".join(c.title for c in recent_convs[:5])
+
+    prompt = f"""根据以下用户信息，生成 3 个个性化的推荐提示，让用户在 AI 对话中使用。
+每条包含 icon (emoji) 和 text (中文，15字以内)。
+只返回 JSON 数组，不要其他文字。
+
+用户记忆：
+{mem_summary}
+
+最近对话标题：{conv_titles}
+
+输出格式：[{{"icon": "emoji", "text": "提示文本"}}]"""
+
+    try:
+        llm = get_llm("qwen-turbo")
+        response = llm.invoke(prompt)
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        suggestions = json.loads(raw)
+        if isinstance(suggestions, list) and len(suggestions) >= 2:
+            return suggestions[:3]
+    except Exception:
+        pass
+
+    return DEFAULT_SUGGESTIONS
+
+
+@app.get("/search")
+def search_messages(q: str = "", db: Session = Depends(get_db)):
+    if not q or len(q) < 2:
+        return []
+    msgs = db.query(Message).filter(
+        Message.content.ilike(f"%{q}%"),
+        Message.conversation_id.in_(
+            db.query(Conversation.id).filter(Conversation.user_id == USER_ID)
+        ),
+    ).order_by(Message.created_at.desc()).limit(20).all()
+
+    conv_ids = set(m.conversation_id for m in msgs)
+    conv_map = {}
+    for cid in conv_ids:
+        conv = db.query(Conversation).filter(Conversation.id == cid).first()
+        if conv:
+            conv_map[cid] = conv.title
+
+    return [
+        {
+            "conversation_id": m.conversation_id,
+            "conversation_title": conv_map.get(m.conversation_id, "未知"),
+            "role": m.role,
+            "content": m.content[:200],
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in msgs
+    ]
+
+
 # ---------- 对话管理接口 ----------
 
 @app.get("/conversations")
-def list_conversations(db: Session = Depends(get_db)):
-    """获取当前用户的所有对话列表"""
-    convs = db.query(Conversation).filter(Conversation.user_id == USER_ID).order_by(Conversation.created_at.desc()).all()
+def list_conversations(request: Request, db: Session = Depends(get_db)):
+    """获取当前设备的所有对话列表"""
+    ctx = get_device_context(db, request)
+    convs = db.query(Conversation).filter(Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).order_by(Conversation.created_at.desc()).all()
     return [
         {"id": c.id, "title": c.title, "created_at": c.created_at.isoformat(), "pinned": c.pinned or False}
         for c in convs
@@ -109,9 +211,10 @@ def list_conversations(db: Session = Depends(get_db)):
 
 
 @app.post("/conversations")
-def create_conversation(req: NewConversationRequest, db: Session = Depends(get_db)):
+def create_conversation(req: NewConversationRequest, request: Request, db: Session = Depends(get_db)):
     """新建对话"""
-    conv = Conversation(title=req.title or "新对话", user_id=USER_ID)
+    ctx = get_device_context(db, request)
+    conv = Conversation(title=req.title or "新对话", user_id=USER_ID, device_id=ctx.device_id)
     db.add(conv)
     db.commit()
     db.refresh(conv)
@@ -119,9 +222,10 @@ def create_conversation(req: NewConversationRequest, db: Session = Depends(get_d
 
 
 @app.delete("/conversations/{conv_id}")
-def delete_conversation(conv_id: int, db: Session = Depends(get_db)):
+def delete_conversation(conv_id: int, request: Request, db: Session = Depends(get_db)):
     """删除对话及其所有消息"""
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID).first()
+    ctx = get_device_context(db, request)
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
     db.delete(conv)
@@ -130,9 +234,10 @@ def delete_conversation(conv_id: int, db: Session = Depends(get_db)):
 
 
 @app.patch("/conversations/{conv_id}")
-def update_conversation(conv_id: int, req: UpdateConversationRequest, db: Session = Depends(get_db)):
+def update_conversation(conv_id: int, req: UpdateConversationRequest, request: Request, db: Session = Depends(get_db)):
     """更新对话标题或置顶状态"""
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID).first()
+    ctx = get_device_context(db, request)
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
     if req.title is not None:
@@ -145,9 +250,10 @@ def update_conversation(conv_id: int, req: UpdateConversationRequest, db: Sessio
 
 
 @app.get("/conversations/{conv_id}/messages")
-def get_messages(conv_id: int, db: Session = Depends(get_db)):
+def get_messages(conv_id: int, request: Request, db: Session = Depends(get_db)):
     """获取某个对话的所有消息"""
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID).first()
+    ctx = get_device_context(db, request)
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
     msgs = db.query(Message).filter(Message.conversation_id == conv_id).order_by(Message.created_at).all()
@@ -159,9 +265,37 @@ class BranchRequest(BaseModel):
 
 
 @app.post("/conversations/{conv_id}/branch")
-def branch_conversation(conv_id: int, req: BranchRequest, db: Session = Depends(get_db)):
+def branch_conversation(conv_id: int, req: BranchRequest, request: Request, db: Session = Depends(get_db)):
     """从某条消息分叉出新对话"""
-    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID).first()
+    ctx = get_device_context(db, request)
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="对话不存在")
+
+    msgs = db.query(Message).filter(Message.conversation_id == conv_id).order_by(Message.created_at).all()
+    if req.from_message_index < 0 or req.from_message_index >= len(msgs):
+        raise HTTPException(status_code=400, detail="消息索引无效")
+
+    new_conv = Conversation(title=conv.title + " (分支)", user_id=USER_ID, device_id=ctx.device_id)
+    db.add(new_conv)
+    db.commit()
+    db.refresh(new_conv)
+
+    for m in msgs[:req.from_message_index]:
+        db.add(Message(role=m.role, content=m.content, conversation_id=new_conv.id))
+    db.commit()
+
+    return {"id": new_conv.id, "title": new_conv.title}
+
+
+
+
+@app.get("/devices")
+def list_devices(db: Session = Depends(get_db)):
+    """列出所有已知设备"""
+    ctx = get_device_context(db, request)
+    """从某条消息分叉出新对话"""
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
 
@@ -170,7 +304,7 @@ def branch_conversation(conv_id: int, req: BranchRequest, db: Session = Depends(
         raise HTTPException(status_code=400, detail="消息索引无效")
 
     # 创建新对话
-    new_conv = Conversation(title=conv.title + " (分支)", user_id=USER_ID)
+    new_conv = Conversation(title=conv.title + " (分支)", user_id=USER_ID, device_id=ctx.device_id)
     db.add(new_conv)
     db.commit()
     db.refresh(new_conv)
@@ -183,27 +317,48 @@ def branch_conversation(conv_id: int, req: BranchRequest, db: Session = Depends(
     return {"id": new_conv.id, "title": new_conv.title}
 
 
+
+
+# ---------- 文件下载 ----------
+
+@app.get("/files/{filename}")
+def download_file(filename: str):
+    """提供生成的文件下载"""
+    from fastapi.responses import FileResponse
+    import os as _os
+    files_dir = _os.environ.get("FILES_DIR", "/data/files")
+    if not _os.path.isabs(files_dir):
+        files_dir = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), files_dir)
+    _os.makedirs(files_dir, exist_ok=True)
+    filepath = _os.path.join(files_dir, filename)
+    if not _os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(filepath, filename=filename)
+
+
+# 确保文件目录存在
+import os as _os
+_files_dir = _os.environ.get("FILES_DIR", "/data/files")
+if not _os.path.isabs(_files_dir):
+    _files_dir = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), _files_dir)
+_os.makedirs(_files_dir, exist_ok=True)
+
 # ---------- 聊天接口 ----------
-
-_IMAGE_GEN_KEYWORDS = [
-    "画", "生成图片", "生成图", "创建图片", "制作图片",
-    "generate image", "draw", "create image",
-]
-
-
-def _is_image_gen(text: str) -> bool:
-    msg = text.lower().strip()
-    return any(kw in msg for kw in _IMAGE_GEN_KEYWORDS)
-
 
 def _sse(event: dict) -> str:
     """把 dict 编码成 SSE data 行"""
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
-def _build_messages(history, user_id=None, db=None, query=None):
+def _build_messages(history, user_id=None, db=None, query=None, device_ctx=None):
     """从数据库历史记录构建 LangChain 消息列表，注入用户记忆和知识库"""
     system_content = SYSTEM_PROMPT
+
+    # 注入设备信息
+    if device_ctx:
+        device_summary = device_ctx.summary_for_prompt
+        if device_summary:
+            system_content += f"\n\n[当前设备信息]\n{device_summary}\n注意：自然地利用这个信息，如果用户问你在什么设备上，你可以直接告诉他。"
 
     if user_id and db:
         # 注入记忆
@@ -234,6 +389,7 @@ def _build_messages(history, user_id=None, db=None, query=None):
 
 @app.post("/chat/{conv_id}")
 async def chat(
+    request: Request,
     conv_id: int,
     message: str = Form(...),
     model: str = Form("qwen-max"),
@@ -241,9 +397,8 @@ async def chat(
     db: Session = Depends(get_db),
 ):
     """在指定对话中聊天，支持文件上传，SSE 流式返回"""
-    conv = db.query(Conversation).filter(
-        Conversation.id == conv_id, Conversation.user_id == USER_ID
-    ).first()
+    ctx = get_device_context(db, request)
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.user_id == USER_ID, Conversation.device_id == ctx.device_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="对话不存在")
 
@@ -276,7 +431,7 @@ async def chat(
     history = db.query(Message).filter(
         Message.conversation_id == conv_id
     ).order_by(Message.created_at).all()
-    messages = _build_messages(history, user_id=USER_ID, db=db, query=message)
+    messages = _build_messages(history, user_id=USER_ID, db=db, query=message, device_ctx=ctx)
 
     # 如果有文件上下文，追加到最后一条 HumanMessage
     if file_context and messages and isinstance(messages[-1], HumanMessage):
@@ -308,50 +463,7 @@ async def chat(
 
         return StreamingResponse(stream_vision(), media_type="text/event-stream")
 
-    # 路径 2：图片生成 → SiliconFlow Kolors（同步，~5秒）
-    if SILICONFLOW_API_KEY and _is_image_gen(message):
-        async def stream_image_gen():
-            ai_content = ""
-            try:
-                yield _sse({"type": "image_generating"})
-
-                resp = httpx.post(
-                    "https://api.siliconflow.cn/v1/images/generations",
-                    headers={
-                        "Authorization": f"Bearer {SILICONFLOW_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "Kwai-Kolors/Kolors",
-                        "prompt": message[:500],
-                        "image_size": "1024x1024",
-                        "num_inference_steps": 25,
-                    },
-                    timeout=60,
-                )
-                data = resp.json()
-
-                images = data.get("images", [])
-                if images and images[0].get("url"):
-                    img_url = images[0]["url"]
-                    yield _sse({"type": "image_done", "url": img_url})
-                    ai_content = f"![generated image]({img_url})"
-                else:
-                    err = f"图片生成失败：{data.get('message', data.get('error', {}).get('message', 'unknown error'))}"
-                    yield _sse({"type": "token", "content": err})
-                    ai_content = err
-            except Exception as e:
-                err = f"图片生成失败：{e}"
-                yield _sse({"type": "token", "content": err})
-                ai_content = err
-
-            db.add(Message(role="assistant", content=ai_content, conversation_id=conv_id))
-            db.commit()
-            yield _sse({"type": "done"})
-
-        return StreamingResponse(stream_image_gen(), media_type="text/event-stream")
-
-    # 路径 3：DeepAgent（带工具调用）
+    # 路径 2：DeepAgent（带工具调用）（带工具调用）
     agent = create_agent(model)
 
     if agent:
@@ -363,18 +475,22 @@ async def chat(
                     stream_mode="messages",
                 ):
                     chunk, metadata = event
+                    chunk_type = getattr(chunk, "type", "")
 
-                    if hasattr(chunk, "type") and chunk.type == "AIMessageChunk" and chunk.content:
-                        ai_content += chunk.content
-                        yield _sse({"type": "token", "content": chunk.content})
-
-                    elif hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                        for tc in chunk.tool_calls:
-                            yield _sse({"type": "tool_start", "tool": tc["name"], "args": tc["args"]})
-
-                    elif hasattr(chunk, "type") and chunk.type == "ToolMessage":
+                    # Tool 结束（ToolMessage type 可能是 "tool" 或 "ToolMessage"）
+                    if chunk_type in ("tool", "ToolMessage") or isinstance(chunk, ToolMessage):
                         preview = str(chunk.content)[:100] if chunk.content else ""
-                        yield _sse({"type": "tool_end", "tool": chunk.name, "result_preview": preview})
+                        tool_name = getattr(chunk, "name", "unknown")
+                        yield _sse({"type": "tool_end", "tool": tool_name, "result_preview": preview})
+
+                    # AI 文本输出（非工具调用 chunk）
+                    elif chunk_type in ("AIMessageChunk",) or hasattr(chunk, "tool_calls"):
+                        if hasattr(chunk, "tool_calls") and chunk.tool_calls:
+                            for tc in chunk.tool_calls:
+                                yield _sse({"type": "tool_start", "tool": tc["name"], "args": tc["args"]})
+                        if chunk.content:
+                            ai_content += chunk.content
+                            yield _sse({"type": "token", "content": chunk.content})
             except Exception as e:
                 err_msg = f"Agent 调用出错: {e}"
                 if not ai_content:
@@ -388,7 +504,7 @@ async def chat(
 
         return StreamingResponse(stream_agent(), media_type="text/event-stream")
 
-    # 路径 4：简单聊天（模型不支持工具调用时的兜底）
+    # 路径 3：简单聊天（模型不支持工具调用时的兜底）
     else:
         async def stream_simple():
             ai_content = ""
@@ -614,6 +730,13 @@ async def speech_to_text(audio: UploadFile = File(...)):
             if p and os.path.exists(p):
                 try: os.unlink(p)
                 except: pass
+
+
+@app.on_event("startup")
+def _on_startup():
+    """启动时：刷新热梗缓存 + 启动后台定时刷新"""
+    refresh_memes()
+    start_background_refresh()
 
 
 if __name__ == "__main__":

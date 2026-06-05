@@ -19,6 +19,7 @@ class Conversation(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, default="新对话")
     user_id = Column(Integer, default=1)
+    device_id = Column(String, default="web-default")
     pinned = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -69,3 +70,18 @@ class ScheduledTask(Base):
     cron = Column(String, nullable=False)
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Device(Base):
+    __tablename__ = "devices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, unique=True, index=True, nullable=False)
+    user_agent = Column(String, default="")
+    ip_address = Column(String, default="")
+    device_model = Column(String, default="")
+    device_type = Column(String, default="")
+    browser = Column(String, default="")
+    os_name = Column(String, default="")
+    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

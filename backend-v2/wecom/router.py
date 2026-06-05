@@ -78,54 +78,60 @@ async def receive_message(
     nonce: str = Query(...),
 ):
     """接收企业微信消息"""
+    logger.info("====== 收到企微 POST 消息 ======")
     body = await request.body()
     xml_body = body.decode("utf-8")
+    logger.info("POST body: %s", xml_body[:200])
 
     if not _wecom_configured():
         logger.warning("企微未配置，忽略消息")
         return Response(content="success")
 
-    crypto = _get_crypto()
+    try:
+        crypto = _get_crypto()
 
-    # 1. 提取加密内容
-    encrypt = parse_encrypted_xml(xml_body)
+        # 1. 提取加密内容
+        encrypt = parse_encrypted_xml(xml_body)
 
-    # 2. 验证签名
-    if not crypto.verify_signature(msg_signature, timestamp, nonce, encrypt):
-        logger.warning("消息签名验证失败")
+        # 2. 验证签名
+        if not crypto.verify_signature(msg_signature, timestamp, nonce, encrypt):
+            logger.warning("消息签名验证失败")
+            return Response(content="success")
+
+        # 3. 解密消息（POST消息含CorpID，需要校验）
+        plain_xml = crypto.decrypt(encrypt, verify_corp_id=True)
+        msg = parse_message_xml(plain_xml)
+        logger.info("收到企微消息: FromUser=%s, Content=%s", msg.get("FromUserName", ""), msg.get("Content", "")[:50])
+
+        # 4. 去重
+        msg_id = msg.get("MsgId", "")
+        if msg_id and msg_id in _processed_msgs:
+            return Response(content="success")
+        if msg_id:
+            _processed_msgs.add(msg_id)
+            if len(_processed_msgs) > _MAX_PROCESSED:
+                to_remove = list(_processed_msgs)[: _MAX_PROCESSED // 2]
+                for mid in to_remove:
+                    _processed_msgs.discard(mid)
+
+        # 5. 只处理文本消息
+        if msg.get("MsgType") != "text":
+            asyncio.create_task(_send_unsupported(msg.get("FromUserName", "")))
+            return Response(content="success")
+
+        user_id = msg.get("FromUserName", "")
+        content = msg.get("Content", "")
+
+        if not content.strip():
+            return Response(content="success")
+
+        # 6. 立即返回 success，后台处理 AI 回复
+        asyncio.create_task(_handle_and_reply(user_id, content))
         return Response(content="success")
 
-    # 3. 解密消息
-    plain_xml = crypto.decrypt(encrypt)
-    msg = parse_message_xml(plain_xml)
-    logger.info("收到企微消息: FromUser=%s, Content=%s", msg.get("FromUserName", ""), msg.get("Content", "")[:50])
-
-    # 4. 去重
-    msg_id = msg.get("MsgId", "")
-    if msg_id and msg_id in _processed_msgs:
+    except Exception as e:
+        logger.error("处理企微POST失败: %s", e, exc_info=True)
         return Response(content="success")
-    if msg_id:
-        _processed_msgs.add(msg_id)
-        if len(_processed_msgs) > _MAX_PROCESSED:
-            # 简单清理：丢弃最早的一半
-            to_remove = list(_processed_msgs)[: _MAX_PROCESSED // 2]
-            for mid in to_remove:
-                _processed_msgs.discard(mid)
-
-    # 5. 只处理文本消息
-    if msg.get("MsgType") != "text":
-        asyncio.create_task(_send_unsupported(msg.get("FromUserName", "")))
-        return Response(content="success")
-
-    user_id = msg.get("FromUserName", "")
-    content = msg.get("Content", "")
-
-    if not content.strip():
-        return Response(content="success")
-
-    # 6. 立即返回 success，后台处理 AI 回复
-    asyncio.create_task(_handle_and_reply(user_id, content))
-    return Response(content="success")
 
 
 async def _handle_and_reply(user_id: str, content: str):
