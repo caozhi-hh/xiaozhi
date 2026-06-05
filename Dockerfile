@@ -6,11 +6,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements.txt .
+COPY backend-v2/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code
-COPY . .
+# Copy source code from backend-v2 subdirectory
+COPY backend-v2/ .
 
 # Create data directory for SQLite
 RUN mkdir -p /data
