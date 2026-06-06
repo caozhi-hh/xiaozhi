@@ -46,7 +46,7 @@ def _get_or_create_conversation(db, wecom_user_id: str, content: str) -> int:
 
 def _build_messages_simple(history, user_id=USER_ID, db=None, query=None):
     """构建消息列表（注入记忆+RAG），复用 main.py 的逻辑"""
-    from agent.prompt import SYSTEM_PROMPT
+    from agent.prompts import SYSTEM_PROMPT
     from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
     system_content = SYSTEM_PROMPT

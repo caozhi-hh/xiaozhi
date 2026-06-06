@@ -7,7 +7,7 @@ Agent 工厂 — 用 DeepAgents create_deep_agent 创建 Agent
 from deepagents import create_deep_agent
 
 from agent.tools import ALL_TOOLS
-from agent.prompt import SYSTEM_PROMPT, AGENT_PROMPT
+from agent.prompts import SYSTEM_PROMPT, AGENT_PROMPT
 from agent.meme_fetcher import get_memes
 from llm import get_llm
 

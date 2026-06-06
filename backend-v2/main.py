@@ -34,7 +34,7 @@ from database import get_db, engine, Base
 from models import Conversation, Message, Memory
 from llm import get_llm, get_available_models
 from agent import create_agent
-from agent.prompt import SYSTEM_PROMPT
+from agent.prompts import SYSTEM_PROMPT
 from device import get_device_context, DeviceContext
 from fastapi import Request
 from agent.meme_fetcher import refresh_memes, start_background_refresh

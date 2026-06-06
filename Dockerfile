@@ -1,4 +1,5 @@
 FROM python:3.12-slim
+# rebuild 20260605d - fix prompt.py quotes
 
 WORKDIR /app
 
