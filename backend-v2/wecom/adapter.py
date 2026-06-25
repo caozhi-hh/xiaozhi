@@ -18,8 +18,8 @@ logger = logging.getLogger("wecom.adapter")
 # 小智系统固定 USER_ID
 USER_ID = 1
 
-# 模型名称（默认用 qwen-max）
-DEFAULT_MODEL = "qwen-max"
+# 模型名称（默认用 glm-4-flash，原 qwen key 失效已统一切 glm）
+DEFAULT_MODEL = "glm-4-flash"
 
 
 def _get_or_create_conversation(db, wecom_user_id: str, content: str) -> int:
@@ -66,16 +66,17 @@ def _build_messages_simple(history, user_id=USER_ID, db=None, query=None):
             system_content += mem_text
 
         if query:
-            from rag import search_knowledge
-
-            doc_count = db.query(Document).filter(Document.user_id == user_id).count()
-            if doc_count > 0:
-                results = search_knowledge(user_id, query)
+            try:
+                from knowledge import search_knowledge as _search
+                results = _search(query, top_k=5)
                 if results:
                     rag_text = "\n\n【知识库参考】\n" + "\n".join(
-                        f"- [来源: {r['filename']}] {r['content']}" for r in results
+                        f"- [来源: {r.get('filename', r.get('source_id', '未知'))}] {r['content']}"
+                        for r in results
                     )
                     system_content += rag_text
+            except Exception as e:
+                logger.warning("知识库搜索失败: %s", e)
 
     messages = [SystemMessage(content=system_content)]
     for m in history:

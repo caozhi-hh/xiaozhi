@@ -151,7 +151,7 @@ def get_suggestions(db: Session = Depends(get_db)):
 输出格式：[{{"icon": "emoji", "text": "提示文本"}}]"""
 
     try:
-        llm = get_llm("qwen-turbo")
+        llm = get_llm("glm-4-flash")
         response = llm.invoke(prompt)
         raw = response.content.strip()
         if raw.startswith("```"):
@@ -319,29 +319,130 @@ def list_devices(db: Session = Depends(get_db)):
 
 
 
-# ---------- 文件下载 ----------
+# ---------- 文件管理 ----------
+
+import json as _json
+from datetime import datetime
+
+def _get_files_dir():
+    d = os.environ.get("FILES_DIR", "/data/files")
+    if not os.path.isabs(d):
+        d = os.path.join(os.path.dirname(os.path.dirname(__file__)), d)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _get_kept_path():
+    return os.path.join(_get_files_dir(), ".kept.json")
+
+def _load_kept() -> set:
+    p = _get_kept_path()
+    if os.path.exists(p):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return set(_json.load(f))
+        except Exception:
+            pass
+    return set()
+
+def _save_kept(kept: set):
+    with open(_get_kept_path(), "w", encoding="utf-8") as f:
+        _json.dump(sorted(kept), f, ensure_ascii=False)
+
 
 @app.get("/files/{filename}")
 def download_file(filename: str):
     """提供生成的文件下载"""
     from fastapi.responses import FileResponse
-    import os as _os
-    files_dir = _os.environ.get("FILES_DIR", "/data/files")
-    if not _os.path.isabs(files_dir):
-        files_dir = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), files_dir)
-    _os.makedirs(files_dir, exist_ok=True)
-    filepath = _os.path.join(files_dir, filename)
-    if not _os.path.exists(filepath):
+    filepath = os.path.join(_get_files_dir(), filename)
+    if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="文件不存在")
     return FileResponse(filepath, filename=filename)
 
 
-# 确保文件目录存在
-import os as _os
-_files_dir = _os.environ.get("FILES_DIR", "/data/files")
-if not _os.path.isabs(_files_dir):
-    _files_dir = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), _files_dir)
-_os.makedirs(_files_dir, exist_ok=True)
+@app.post("/files/{filename}/keep")
+def keep_file(filename: str):
+    """标记文件为保留（每月清理而不是每天清理）"""
+    filepath = os.path.join(_get_files_dir(), filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    kept = _load_kept()
+    kept.add(filename)
+    _save_kept(kept)
+    return {"ok": True, "kept": True}
+
+
+@app.delete("/files/{filename}/keep")
+def unkeep_file(filename: str):
+    """取消文件保留（恢复为每天清理）"""
+    kept = _load_kept()
+    kept.discard(filename)
+    _save_kept(kept)
+    return {"ok": True, "kept": False}
+
+
+@app.get("/files")
+def list_files():
+    """列出所有生成的文件及其保留状态"""
+    files_dir = _get_files_dir()
+    kept = _load_kept()
+    files = []
+    for fname in os.listdir(files_dir):
+        if fname.startswith("."):
+            continue
+        fpath = os.path.join(files_dir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        stat = os.stat(fpath)
+        ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+        files.append({
+            "name": fname,
+            "size": stat.st_size,
+            "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            "format": ext,
+            "kept": fname in kept,
+        })
+    files.sort(key=lambda x: x["created_at"], reverse=True)
+    return files
+
+
+@app.post("/files/cleanup")
+def cleanup_files():
+    """手动触发文件清理：普通文件清理 1 天前的，保留文件清理 30 天前的"""
+    return _do_cleanup()
+
+
+def _do_cleanup():
+    """执行文件清理"""
+    files_dir = _get_files_dir()
+    kept = _load_kept()
+    now = datetime.now().timestamp()
+    one_day = 24 * 60 * 60
+    thirty_days = 30 * one_day
+    removed = []
+    kept_removed = []
+
+    for fname in list(os.listdir(files_dir)):
+        if fname.startswith("."):
+            continue
+        fpath = os.path.join(files_dir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        age = now - os.stat(fpath).st_ctime
+        is_kept = fname in kept
+
+        if is_kept and age > thirty_days:
+            os.remove(fpath)
+            kept.discard(fname)
+            kept_removed.append(fname)
+        elif not is_kept and age > one_day:
+            os.remove(fpath)
+            removed.append(fname)
+
+    if kept_removed:
+        _save_kept(kept)
+
+    logger.info("文件清理完成: 普通 %d 个, 保留 %d 个", len(removed), len(kept_removed))
+    return {"removed": removed, "kept_removed": kept_removed}
 
 # ---------- 聊天接口 ----------
 
@@ -381,7 +482,7 @@ async def chat(
     request: Request,
     conv_id: int,
     message: str = Form(...),
-    model: str = Form("qwen-max"),
+    model: str = Form("glm-5.2"),
     file: UploadFile | None = File(None),
     db: Session = Depends(get_db),
 ):
@@ -471,6 +572,20 @@ async def chat(
                         preview = str(chunk.content)[:100] if chunk.content else ""
                         tool_name = getattr(chunk, "name", "unknown")
                         yield _sse({"type": "tool_end", "tool": tool_name, "result_preview": preview})
+
+                        # 文件生成工具：额外发送 file 事件，前端直接显示为附件
+                        if tool_name == "generate_file" and chunk.content:
+                            import re
+                            _content = str(chunk.content)
+                            _url_match = re.search(r'\((https?://[^\s)]+?/files/[^\s)]+)\)', _content)
+                            _name_match = re.search(r'点击下载:\s*([^\)]+)\]', _content)
+                            if _url_match and _name_match:
+                                yield _sse({
+                                    "type": "file",
+                                    "url": _url_match.group(1),
+                                    "name": _name_match.group(1).strip(),
+                                    "format": _name_match.group(1).strip().rsplit(".", 1)[-1].lower() if "." in _name_match.group(1) else "txt",
+                                })
 
                     # AI 文本输出（非工具调用 chunk）
                     elif chunk_type in ("AIMessageChunk",) or hasattr(chunk, "tool_calls"):
@@ -621,11 +736,122 @@ async def speech_to_text(audio: UploadFile = File(...)):
                 except: pass
 
 
+# ---------- 知识库管理接口 ----------
+
+class KnowledgeTextRequest(BaseModel):
+    title: str
+    content: str
+
+
+@app.post("/knowledge/upload")
+async def upload_knowledge(file: UploadFile = File(...)):
+    """上传文档到知识库（PDF/DOCX/TXT/MD），自动分块索引"""
+    import uuid as _uuid
+
+    filename = file.filename or "unknown.txt"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in {"pdf", "docx", "txt", "md"}:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext}，仅支持 PDF/DOCX/TXT/MD")
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="文件为空")
+
+    text = extract_text(file_bytes, filename)
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="未能从文件中提取到文本内容")
+
+    source_id = str(_uuid.uuid4())[:8]
+    try:
+        from knowledge import add_document
+        result = add_document(source_id, filename, text)
+        return result
+    except Exception as e:
+        logger.error("知识库文档上传失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"文档入库失败: {e}")
+
+
+@app.post("/knowledge/text")
+def add_knowledge_text(req: KnowledgeTextRequest):
+    """手动添加文本到知识库"""
+    import uuid as _uuid
+
+    if not req.content or len(req.content.strip()) < 10:
+        raise HTTPException(status_code=400, detail="文本内容至少需要 10 个字符")
+
+    source_id = str(_uuid.uuid4())[:8]
+    try:
+        from knowledge import add_text
+        result = add_text(source_id, req.title, req.content)
+        return result
+    except Exception as e:
+        logger.error("知识库文本添加失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"文本入库失败: {e}")
+
+
+@app.get("/knowledge")
+def list_knowledge():
+    """列出知识库中的所有来源"""
+    try:
+        from knowledge import list_sources
+        return list_sources()
+    except Exception as e:
+        logger.error("列出知识来源失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"获取知识库列表失败: {e}")
+
+
+@app.delete("/knowledge/{source_id}")
+def delete_knowledge(source_id: str):
+    """删除知识库中的某个来源（及其所有分块）"""
+    try:
+        from knowledge import delete_source
+        ok = delete_source(source_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="来源不存在")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("删除知识来源失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"删除失败: {e}")
+
+
+@app.get("/knowledge/stats")
+def knowledge_stats():
+    """获取知识库统计信息"""
+    try:
+        from knowledge import get_stats
+        return get_stats()
+    except Exception as e:
+        logger.error("获取知识库统计失败: %s", e)
+        return {"total_chunks": 0, "total_sources": 0}
+
+
 @app.on_event("startup")
 def _on_startup():
-    """启动时：刷新热梗缓存 + 启动后台定时刷新"""
+    """启动时：刷新热梗缓存 + 启动后台定时刷新 + 注册文件清理定时任务"""
     refresh_memes()
     start_background_refresh()
+    # 每天凌晨 3 点清理过期文件
+    import threading
+    def _cleanup_loop():
+        import time
+        while True:
+            now = datetime.now()
+            next_3am = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if now >= next_3am:
+                from datetime import timedelta
+                next_3am = next_3am + timedelta(days=1)
+            sleep_seconds = (next_3am - now).total_seconds()
+            time.sleep(sleep_seconds)
+            try:
+                result = _do_cleanup()
+                logger.info("定时文件清理完成: %s", result)
+            except Exception as e:
+                logger.error("定时文件清理失败: %s", e)
+    t = threading.Thread(target=_cleanup_loop, daemon=True)
+    t.start()
+    logger.info("文件清理定时任务已启动（每天凌晨 3:00）")
 
 
 if __name__ == "__main__":

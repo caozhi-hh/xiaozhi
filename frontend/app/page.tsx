@@ -27,7 +27,7 @@ function ChatView() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [selectedModel, setSelectedModel] = useState("qwen-max");
+  const [selectedModel, setSelectedModel] = useState("glm-5.2");
   const [models, setModels] = useState<{key: string; name: string}[]>([]);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [showMemories, setShowMemories] = useState(false);
@@ -220,15 +220,15 @@ function ChatView() {
       const res = await apiFetch(`/chat/${convIdForTitle}`, { method: "POST", body: formData, signal: controller.signal });
       if (!res.ok || !res.body) throw new Error("请求失败");
       const reader = res.body.getReader(); const decoder = new TextDecoder();
-      let aiContent = ""; const toolCalls: ToolCall[] = []; let todos: { content: string; status: string }[] | undefined;
+      let aiContent = ""; const toolCalls: ToolCall[] = []; let todos: { content: string; status: string }[] | undefined; const genFiles: { name: string; url: string; format: string }[] = [];
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
       // 节流渲染：每80ms最多刷新一次UI，避免手机卡顿
       let lastRender = 0; let renderTimer: ReturnType<typeof setTimeout> | null = null;
       const RENDER_MS = 80;
       const doRender = () => {
         lastRender = Date.now(); renderTimer = null;
-        const cur = aiContent; const curTools = toolCalls.length > 0 ? [...toolCalls] : undefined;
-        setMessages((prev) => { const u = [...prev]; u[u.length - 1] = { role: "assistant", content: cur, toolCalls: curTools, todos }; return u; });
+        const cur = aiContent; const curTools = toolCalls.length > 0 ? [...toolCalls] : undefined; const curFiles = genFiles.length > 0 ? [...genFiles] : undefined;
+        setMessages((prev) => { const u = [...prev]; u[u.length - 1] = { role: "assistant", content: cur, toolCalls: curTools, files: curFiles, todos }; return u; });
       };
       const scheduleRender = () => {
         const gap = Date.now() - lastRender;
@@ -240,11 +240,12 @@ function ChatView() {
         const chunk = decoder.decode(value, { stream: true });
         for (const line of chunk.split("\n")) {
           if (!line.startsWith("data: ")) continue; const raw = line.slice(6); if (raw === "[DONE]") break;
-          let event: { type: string; content?: string; tool?: string; args?: Record<string, unknown>; result_preview?: string; url?: string };
+          let event: { type: string; content?: string; tool?: string; args?: Record<string, unknown>; result_preview?: string; url?: string; name?: string; format?: string };
           try { event = JSON.parse(raw); } catch { aiContent += raw; scheduleRender(); continue; }
           if (event.type === "token" && event.content) aiContent += event.content;
           else if (event.type === "tool_start" && event.tool) { toolCalls.push({ tool: event.tool, args: event.args || {}, status: "running" }); if (event.tool === "write_todos" && event.args?.todos) todos = (event.args.todos as { content: string; status: string }[]).map(t => ({ ...t })); }
           else if (event.type === "tool_end" && event.tool) { const tc = toolCalls.find(t => t.tool === event.tool && t.status === "running"); if (tc) { tc.status = "done"; tc.result_preview = event.result_preview; } }
+          else if (event.type === "file" && event.url && event.name) { genFiles.push({ name: event.name, url: event.url, format: event.format || "txt" }); }
           else if (event.type === "done") { toolCalls.forEach(tc => { tc.status = "done"; }); }
           scheduleRender();
         }
@@ -398,6 +399,7 @@ function ChatView() {
                           <div className="space-y-2"><textarea value={editText} onChange={(e) => setEditText(e.target.value)} className="w-full bg-transparent border border-white/20 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none min-h-[60px]" autoFocus /><div className="flex gap-2 justify-end"><button onClick={() => setEditingIdx(null)} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer">取消</button><button onClick={() => handleEditSave(i)} className="text-xs px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors cursor-pointer">保存并发送</button></div></div>
                         ) : msg.content}
                         {msg.attachment && <div className="mt-2">{msg.attachment.type === "image" && msg.attachment.preview ? <img src={msg.attachment.preview} alt={msg.attachment.name} className="max-w-[200px] max-h-[150px] rounded-lg border border-white/20" /> : <span className="inline-flex items-center gap-1 text-xs bg-black/10 px-2 py-1 rounded">📎 {msg.attachment.name}</span>}</div>}
+                        {msg.files && msg.files.length > 0 && <div className="mt-2 flex flex-col gap-1.5">{msg.files.map((f, fi) => { const icons: Record<string,string> = { docx: "📄", xlsx: "📊", pdf: "📕", txt: "📝", csv: "📋", md: "📑" }; const labels: Record<string,string> = { docx: "Word", xlsx: "Excel", pdf: "PDF", txt: "文本", csv: "CSV", md: "MD" }; const isKept = f.kept; const fname = f.name; const toggleKeep = () => { const method = isKept ? "DELETE" : "POST"; fetch(`${API_URL}/files/${encodeURIComponent(fname)}/keep`, { method }).then(() => setMessages(prev => { const u = [...prev]; const last = u[u.length - 1]; if (last.files) { u[u.length - 1] = { ...last, files: last.files.map(x => x.name === fname ? { ...x, kept: !isKept } : x) }; } return u; })).catch(() => {}); }; return <div key={fi} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-white/10 hover:bg-black/10 dark:hover:bg-white/10 transition-colors"><span className="text-lg">{icons[f.format] || "📎"}</span><a href={f.url} download className="flex-1 min-w-0 no-underline text-inherit"><div className="text-sm truncate">{f.name}</div><div className="text-[11px] opacity-50">{labels[f.format] || "文件"} · 点击下载{isKept && " · 📌已保留"}</div></a><button onClick={toggleKeep} className="text-xs px-1.5 py-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer" title={isKept ? "取消保留（每天清理）" : "保留文件（每月清理）"}>{isKept ? "📌" : "📍"}</button></div>; })}</div>}
                         {msg.toolCalls && msg.toolCalls.length > 0 && <div className="mt-2 space-y-1">{msg.toolCalls.map((tc, j) => (<div key={j} className="flex items-center gap-1.5 text-xs text-gray-400">{tc.status === "running" ? <><span className="thinking-dots"><span /><span /><span /></span><span className="tool-running px-1.5 py-0.5 rounded">{getToolLabel(tc.tool, tc.args)}</span></> : <><span className="text-green-400">✓</span><span>{getToolLabel(tc.tool, tc.args)}</span></>}</div>))}</div>}
                         {msg.todos && msg.todos.length > 0 && <div className="mt-2 p-2.5 rounded-lg bg-black/5 dark:bg-white/5 text-xs space-y-1.5"><div className="font-medium text-gray-500 dark:text-gray-400 mb-1">📋 任务规划</div>{msg.todos.map((todo, j) => (<div key={j} className="flex items-start gap-2"><span className="mt-0.5 shrink-0">{todo.status === "completed" ? "✅" : todo.status === "in_progress" ? "⏳" : "⬜"}</span><span className={todo.status === "completed" ? "line-through text-gray-400" : "text-gray-600 dark:text-gray-300"}>{todo.content}</span></div>))}</div>}
                         {streaming && msg.role === "assistant" && i === messages.length - 1 && <span className="stream-cursor" />}

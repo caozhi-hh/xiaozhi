@@ -1,36 +1,5 @@
-# Environment
-.env
-*.env.local
-*.env.production
-
-# Python
 __pycache__/
 *.pyc
-*.pyo
-*.egg-info/
-.venv/
-venv/
-*.db
-*.sqlite3
-
-# Node
+.env
 node_modules/
 .next/
-out/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Build
-dist/
-build/
-
-# ChromaDB
-chroma_data/

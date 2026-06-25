@@ -11,12 +11,20 @@ export interface FileAttachment {
   preview?: string;
 }
 
+export interface GeneratedFile {
+  name: string;
+  url: string;
+  format: string;
+  kept?: boolean;
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
   created_at?: string;
   toolCalls?: ToolCall[];
   attachment?: FileAttachment;
+  files?: GeneratedFile[];
   todos?: { content: string; status: string }[];
 }
 

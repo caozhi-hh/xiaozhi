@@ -43,7 +43,7 @@ def _extract_sync(user_text: str, ai_text: str, user_id: int):
     db = SessionLocal()
 
     try:
-        llm = get_llm("qwen-turbo")
+        llm = get_llm("glm-4-flash")
         response = llm.invoke(prompt)
         raw = response.content.strip()
 

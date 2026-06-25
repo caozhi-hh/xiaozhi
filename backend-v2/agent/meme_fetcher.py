@@ -91,7 +91,7 @@ def _summarize_with_llm(raw: str) -> str:
     """用 LLM 把杂乱文本整理成热梗列表"""
     try:
         from llm import get_llm
-        llm = get_llm("qwen-turbo")
+        llm = get_llm("glm-4-flash")
         resp = llm.invoke(
             f"从以下文本中提取最新的中国网络热梗/流行语（抖音、微博、B站等平台）。\n"
             f"只返回用顿号分隔的梗列表，不要解释，不要编号，不要其他文字，最多20个。\n\n"

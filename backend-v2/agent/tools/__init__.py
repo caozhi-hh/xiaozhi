@@ -13,6 +13,7 @@ for _tool_mod, _tool_name in [
     ("agent.tools.image_gen", "generate_image"),
     ("agent.tools.datetime_tool", "get_current_datetime"),
     ("agent.tools.web_reader", "fetch_webpage"),
+    ("agent.tools.knowledge_search", "search_knowledge"),
 ]:
     try:
         import importlib
