@@ -14,7 +14,7 @@ def search_knowledge(query: str) -> str:
         query: 搜索查询，可以是关键词或自然语言问题
     """
     try:
-        from knowledge import search_knowledge as _search
+        from services.knowledge import search_knowledge as _search
         results = _search(query, top_k=5)
         if not results:
             return "知识库中没有找到相关内容。请直接回答用户问题。"

@@ -7,9 +7,9 @@
 import json
 import asyncio
 from sqlalchemy.orm import Session
-from models import Memory
-from database import SessionLocal
-from llm import get_llm
+from core.models import Memory
+from core.database import SessionLocal
+from core.llm import get_llm
 
 EXTRACT_PROMPT = """你是一个信息提取助手。分析下面的用户和 AI 对话，提取值得长期记住的关键信息。
 

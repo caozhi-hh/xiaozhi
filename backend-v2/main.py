@@ -30,17 +30,17 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
-from database import get_db, engine, Base
-from models import Conversation, Message, Memory
-from llm import get_llm, get_available_models
+from core.database import get_db, engine, Base
+from core.models import Conversation, Message, Memory
+from core.llm import get_llm, get_available_models
 from agent import create_agent
 from agent.prompts import SYSTEM_PROMPT
-from device import get_device_context, DeviceContext
+from services.device import get_device_context, DeviceContext
 from fastapi import Request
 from agent.meme_fetcher import refresh_memes, start_background_refresh
-from file_handler import is_image, is_pdf, is_docx, is_xlsx, extract_text, image_to_base64
+from services.file_handler import is_image, is_pdf, is_docx, is_xlsx, extract_text, image_to_base64
 from config import SILICONFLOW_API_KEY
-from memory import extract_memories
+from services.memory import extract_memories
 
 # 创建所有数据库表（如果不存在）
 Base.metadata.create_all(bind=engine)
@@ -48,7 +48,7 @@ Base.metadata.create_all(bind=engine)
 # 自动迁移：给 conversations 表添加 device_id 列
 def _migrate_device_id():
     import sqlite3
-    from database import DB_PATH
+    from core.database import DB_PATH
     if not DB_PATH.startswith("sqlite"):
         return
     db_path = DB_PATH.replace("sqlite:///", "")
@@ -92,10 +92,7 @@ PORT = int(os.environ.get("PORT", 8001))
 # 自用单用户，固定 user_id=1
 USER_ID = 1
 
-# 企业微信渠道（未配置时自动跳过，不影响 Web 前端）
-from wecom import router as wecom_router
-if wecom_router:
-    app.include_router(wecom_router)
+# 企业微信渠道已移除（原 wecom/ 目录 + 接入代码已删除）
 
 
 # ---------- 请求格式 ----------
@@ -303,7 +300,7 @@ def branch_conversation(conv_id: int, req: BranchRequest, request: Request, db: 
 @app.get("/devices")
 def list_devices(db: Session = Depends(get_db)):
     """列出所有已知设备"""
-    from device import Device
+    from services.device import Device
     devices = db.query(Device).order_by(Device.last_seen.desc()).all()
     return [
         {
@@ -763,7 +760,7 @@ async def upload_knowledge(file: UploadFile = File(...)):
 
     source_id = str(_uuid.uuid4())[:8]
     try:
-        from knowledge import add_document
+        from services.knowledge import add_document
         result = add_document(source_id, filename, text)
         return result
     except Exception as e:
@@ -781,7 +778,7 @@ def add_knowledge_text(req: KnowledgeTextRequest):
 
     source_id = str(_uuid.uuid4())[:8]
     try:
-        from knowledge import add_text
+        from services.knowledge import add_text
         result = add_text(source_id, req.title, req.content)
         return result
     except Exception as e:
@@ -793,7 +790,7 @@ def add_knowledge_text(req: KnowledgeTextRequest):
 def list_knowledge():
     """列出知识库中的所有来源"""
     try:
-        from knowledge import list_sources
+        from services.knowledge import list_sources
         return list_sources()
     except Exception as e:
         logger.error("列出知识来源失败: %s", e)
@@ -804,7 +801,7 @@ def list_knowledge():
 def delete_knowledge(source_id: str):
     """删除知识库中的某个来源（及其所有分块）"""
     try:
-        from knowledge import delete_source
+        from services.knowledge import delete_source
         ok = delete_source(source_id)
         if not ok:
             raise HTTPException(status_code=404, detail="来源不存在")
@@ -820,7 +817,7 @@ def delete_knowledge(source_id: str):
 def knowledge_stats():
     """获取知识库统计信息"""
     try:
-        from knowledge import get_stats
+        from services.knowledge import get_stats
         return get_stats()
     except Exception as e:
         logger.error("获取知识库统计失败: %s", e)
@@ -829,8 +826,8 @@ def knowledge_stats():
 
 @app.on_event("startup")
 def _on_startup():
-    """启动时：刷新热梗缓存 + 启动后台定时刷新 + 注册文件清理定时任务"""
-    refresh_memes()
+    """启动时：启动后台刷新热梗 + 注册文件清理定时任务（不阻塞启动）"""
+    # 不同步调 refresh_memes()（会抓网络 ~25s 阻塞启动）；start_background_refresh 后台线程会立即异步刷新
     start_background_refresh()
     # 每天凌晨 3 点清理过期文件
     import threading

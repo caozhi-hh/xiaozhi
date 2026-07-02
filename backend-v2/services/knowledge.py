@@ -24,7 +24,8 @@ CHUNK_OVERLAP = 100
 
 # 本地开发兜底路径
 if not os.path.isabs(CHROMA_DIR):
-    CHROMA_DIR = os.path.join(os.path.dirname(__file__), CHROMA_DIR)
+    # services/ → 退到 backend-v2/ 根，与迁移前路径一致
+    CHROMA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), CHROMA_DIR)
 
 # ---------- 单例缓存 ----------
 

@@ -54,7 +54,12 @@ export function getToolLabel(tool: string, args: Record<string, unknown>): strin
     case "get_weather": return `查询${args.city || ""}天气`;
     case "translate": return "翻译中";
     case "generate_image": return "生成图片中";
+    case "generate_file": return "生成文件中";
     case "write_todos": return "规划任务中";
+    case "fetch_webpage": return "读取网页中";
+    case "run_code": return "运行代码中";
+    case "search_knowledge": return "检索知识库中";
+    case "get_current_datetime": return "获取时间";
     default: return `使用${tool}`;
   }
 }

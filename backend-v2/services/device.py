@@ -59,7 +59,7 @@ def get_device_id_from_request(request) -> str:
 def _upsert_device(db, device_id: str, request):
     """创建或更新设备记录（所有导入延迟到调用时）"""
     try:
-        from models import Device
+        from core.models import Device
     except Exception:
         return None
 

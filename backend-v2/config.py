@@ -13,11 +13,3 @@ if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=False)
 
 SILICONFLOW_API_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
-
-WECOM_CORP_ID = os.environ.get("WECOM_CORP_ID", "")
-WECOM_AGENT_ID = os.environ.get("WECOM_AGENT_ID", "")
-WECOM_SECRET = os.environ.get("WECOM_SECRET", "")
-WECOM_TOKEN = os.environ.get("WECOM_TOKEN", "")
-WECOM_ENCODING_AES_KEY = os.environ.get("WECOM_ENCODING_AES_KEY", "")
-
-WECOM_WEBHOOK_URL = os.environ.get("WECOM_WEBHOOK_URL", "")

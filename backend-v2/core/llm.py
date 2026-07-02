@@ -25,7 +25,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from dotenv import load_dotenv, dotenv_values
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent  # core/ → 退到 backend-v2/ 根找 .env
 ENV_FILE = BASE_DIR / ".env"
 
 load_dotenv(ENV_FILE, override=True)

@@ -9,7 +9,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Bool
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
-from database import Base
+from core.database import Base
 
 
 class Conversation(Base):

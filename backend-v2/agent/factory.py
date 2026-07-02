@@ -9,7 +9,7 @@ from deepagents import create_deep_agent
 from agent.tools import ALL_TOOLS
 from agent.prompts import SYSTEM_PROMPT, AGENT_PROMPT
 from agent.meme_fetcher import get_memes
-from llm import get_llm
+from core.llm import get_llm
 
 _agent_cache: dict = {}
 

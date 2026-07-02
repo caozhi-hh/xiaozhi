@@ -20,11 +20,11 @@ DEFAULT_MEMES = (
 
 
 def get_memes() -> str:
-    """获取当前缓存的热梗文本"""
+    """获取当前缓存的热梗文本（绝不阻塞调用者）"""
     if _cache["memes"] and (time.time() - _cache["updated_at"] < _ttl):
         return _cache["memes"]
-    # 缓存过期或为空，同步刷新一次
-    refresh_memes()
+    # 缓存过期或为空：返回默认值兜底，由 start_background_refresh 的后台线程异步刷新
+    # 不在此同步调 refresh_memes()——那会抓网络 ~25s，阻塞 startup / 首次 create_agent
     return _cache["memes"] or DEFAULT_MEMES
 
 
@@ -90,7 +90,7 @@ def _fetch_from_sources() -> str:
 def _summarize_with_llm(raw: str) -> str:
     """用 LLM 把杂乱文本整理成热梗列表"""
     try:
-        from llm import get_llm
+        from core.llm import get_llm
         llm = get_llm("glm-4-flash")
         resp = llm.invoke(
             f"从以下文本中提取最新的中国网络热梗/流行语（抖音、微博、B站等平台）。\n"
